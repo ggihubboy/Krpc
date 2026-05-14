@@ -37,7 +37,7 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     static std::once_flag init_flag;
     std::call_once(init_flag, []() { ServiceDiscovery::GetInstance().Init(); });
 
-    // 【关键修复 3.1】：利用每次递增的 ID 让请求打散在哈希环上，真正发挥负载均衡
+   
     uint64_t req_id = g_req_id.fetch_add(1, std::memory_order_relaxed);
     std::string route_key = std::to_string(req_id);
 
@@ -51,7 +51,7 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     std::string target_ip = ip_port.substr(0, pos);
     uint16_t target_port = atoi(ip_port.substr(pos + 1).c_str());
 
-    // 【关键修复 3.2】：每次请求动态借出 FD
+  
     int clientfd = KrpcConnectPool::GetInstance().BorrowConnection(target_ip, target_port);
     if (clientfd == -1) {
         controller->SetFailed("Borrow connection from pool failed!");
@@ -85,7 +85,7 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
         send_rpc_str.append(rpc_header_str);
         send_rpc_str.append(args_str);
 
-        // 【关键修复 3.3】：添加 MSG_NOSIGNAL 防止连接被服务端断开时触发 SIGPIPE 杀死客户端！
+       
         if (send(clientfd, send_rpc_str.c_str(), send_rpc_str.size(), MSG_NOSIGNAL) == -1) {
             controller->SetFailed("Send rpc request error!");
             is_bad = true;
@@ -110,6 +110,6 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
         }
     }
 
-    // 【关键修复 3.4】：使用完毕立刻归还，让其他线程也能复用
+ 
     KrpcConnectPool::GetInstance().ReturnConnection(target_ip, target_port, clientfd, is_bad);
 }

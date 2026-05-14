@@ -26,7 +26,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<ConsistentHash>> m_chash_map; 
     std::unordered_map<std::string, std::vector<std::string>> m_nodes_cache;      
     
-    // 【修改点1】：将 mutex 修改为 C++14 的读写锁
+    
     std::shared_timed_mutex m_rw_mtx; 
 
     static void WatcherCallback(zhandle_t *zh, int type, int state, const char *path, void *watcherCtx);

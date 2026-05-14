@@ -21,7 +21,7 @@ public:
 private:
     muduo::net::EventLoop event_loop;
     
-    // 【修改点2】：声明业务工作线程池
+
     muduo::ThreadPool m_thread_pool; 
 
     struct ServiceInfo

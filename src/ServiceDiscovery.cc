@@ -15,7 +15,7 @@ void ServiceDiscovery::Init()
 std::string ServiceDiscovery::GetTargetNode(const std::string &service_name, const std::string &key)
 {
     {
-        // 【修改点2】：绝大多数请求只需加读锁（共享锁），100个线程可以同时并发读取哈希环！
+      
         std::shared_lock<std::shared_timed_mutex> read_lock(m_rw_mtx); 
         if (m_chash_map.find(service_name) != m_chash_map.end())
         {
@@ -49,7 +49,7 @@ void ServiceDiscovery::WatcherCallback(zhandle_t *zh, int type, int state, const
         std::string path_str = path;
         std::string service_name = path_str.substr(1); 
 
-        // 【修改点3】：千万不要在这里加锁！先发起阻塞网络请求获取最新节点
+        // 千万不要在这里加锁！先发起阻塞网络请求获取最新节点
         std::vector<std::string> new_nodes = sd->m_zkClient.GetChildren(path_str.c_str(), WatcherCallback, sd);
         
         // 拿到数据后，再加写锁更新内存结构

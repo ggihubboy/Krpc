@@ -51,7 +51,6 @@ void KrpcProvider::Run()
     // IO线程数量 (负责收发字节流)
     server->setThreadNum(4);
 
-    // 【修改点3】：启动业务线程池，专门处理业务逻辑（如数据库查询、计算等），避免阻塞IO线程
     m_thread_pool.start(100);
 
     ZkClient zkclient;
@@ -149,7 +148,7 @@ void KrpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn, muduo::ne
                 this->SendRpcResponse(conn, response, request);
             });
             
-        // 【修改点4】：将业务方法投递到我们刚刚创建的线程池中去执行，瞬间解放 Reactor 网络读写线程！
+        
         m_thread_pool.run([service, method, request, response, done]() {
             service->CallMethod(method, nullptr, request, response, done);
         });
