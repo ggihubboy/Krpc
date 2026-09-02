@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -65,6 +66,28 @@ static void TestEncodeDecode()
 
     std::string too_big;
     Expect(!EncodeRpcFrame(std::string(100, 'h'), "p", 16, &too_big), "encode reject oversized");
+
+    Expect(DecodeRpcFrame(nullptr, 1024, &header, &payload) == RpcDecodeStatus::Corrupt,
+           "null buffer rejected");
+    Expect(DecodeRpcFrame(&buf, 1024, nullptr, &payload) == RpcDecodeStatus::Corrupt,
+           "null output rejected");
+
+    muduo::net::Buffer incomplete;
+    incomplete.append(frame.data(), frame.size() - 1);
+    const size_t before = incomplete.readableBytes();
+    Expect(DecodeRpcFrame(&incomplete, 1024, &header, &payload) == RpcDecodeStatus::NeedMore,
+           "incomplete frame waits");
+    Expect(incomplete.readableBytes() == before, "incomplete frame is not consumed");
+
+    muduo::net::Buffer pipelined;
+    pipelined.append(frame);
+    pipelined.append(frame);
+    Expect(DecodeRpcFrame(&pipelined, 1024, &header, &payload) == RpcDecodeStatus::Ok,
+           "first pipelined frame");
+    Expect(pipelined.readableBytes() == frame.size(), "second pipelined frame retained");
+    Expect(DecodeRpcFrame(&pipelined, 1024, &header, &payload) == RpcDecodeStatus::Ok,
+           "second pipelined frame");
+    Expect(pipelined.readableBytes() == 0, "pipeline consumed exactly");
 }
 
 static void TestCircuitHalfOpen()
@@ -105,6 +128,34 @@ static void TestPendingCompleteOnce()
     Expect(call->TryComplete(true, "", false), "first complete");
     Expect(!call->TryComplete(false, "late", false), "second complete rejected");
     Expect(call->ok, "winner result kept");
+
+    auto delayed = std::make_shared<RpcPendingCall>();
+    std::thread publisher([delayed]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        delayed->TryComplete(false, "expected failure", true);
+    });
+    Expect(delayed->Wait(100), "wait wakes after publication");
+    publisher.join();
+    Expect(!delayed->ok && delayed->err == "expected failure", "published error visible");
+    Expect(delayed->close_on_finish, "published close flag visible");
+
+    auto raced = std::make_shared<RpcPendingCall>();
+    std::atomic<int> winners{0};
+    std::vector<std::thread> racers;
+    for (int i = 0; i < 16; ++i)
+    {
+        racers.emplace_back([raced, &winners, i]() {
+            if (raced->TryComplete(i == 0, std::to_string(i), false))
+            {
+                winners.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    for (auto &racer : racers)
+    {
+        racer.join();
+    }
+    Expect(winners.load(std::memory_order_relaxed) == 1, "concurrent completion has one winner");
 }
 
 static void TestHashWriteSerialized()
@@ -116,6 +167,12 @@ static void TestHashWriteSerialized()
     ring.UpdateNodes({"10.0.0.3:8000"});
     std::string b = ring.GetTargetNode("k1");
     Expect(b == "10.0.0.3:8000", "update replaces nodes");
+
+    ring.UpdateNodes({"10.0.0.1:8000", "10.0.0.2:8000"});
+    const std::string primary = ring.GetTargetNode("same-key");
+    const std::string alternate = ring.GetTargetNode("same-key", primary);
+    Expect(!primary.empty() && !alternate.empty(), "primary and alternate nodes available");
+    Expect(primary != alternate, "excluded node is not selected");
 }
 
 static void TestMpmc()
@@ -126,6 +183,22 @@ static void TestMpmc()
     Expect(q.pop(v) && v == 1, "pop 1");
     Expect(q.pop(v) && v == 2, "pop 2");
     Expect(!q.pop(v), "empty");
+
+    MPMCQueue<int> full(2);
+    Expect(full.push(1) && full.push(2), "fill bounded queue");
+    Expect(!full.push(3), "full bounded queue rejects push");
+
+    bool invalid_capacity_rejected = false;
+    try
+    {
+        MPMCQueue<int> invalid(3);
+        (void)invalid;
+    }
+    catch (const std::invalid_argument &)
+    {
+        invalid_capacity_rejected = true;
+    }
+    Expect(invalid_capacity_rejected, "non-power-of-two capacity rejected");
 }
 
 int main()
