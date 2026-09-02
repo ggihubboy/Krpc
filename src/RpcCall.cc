@@ -2,6 +2,7 @@
 #include "CircuitBreaker.h"
 #include "ConnContext.h"
 #include "KrpcConnectPool.h"
+#include "Krpccontroller.h"
 #include "TimeoutWheel.h"
 
 void ApplyRpcFinish(const std::shared_ptr<RpcPendingCall> &call)
@@ -62,7 +63,7 @@ void ApplyRpcFinish(const std::shared_ptr<RpcPendingCall> &call)
     {
         if (!call->ok && call->controller)
         {
-            call->controller->SetFailed(call->err);
+            SetRpcFailed(call->controller, call->error_code, call->err);
         }
         call->NotifyDone();
     }
@@ -71,9 +72,10 @@ void ApplyRpcFinish(const std::shared_ptr<RpcPendingCall> &call)
 void FinishRpcCall(const std::shared_ptr<RpcPendingCall> &call,
                    bool ok,
                    const std::string &err,
-                   bool close_conn)
+                   bool close_conn,
+                   int error_code)
 {
-    if (!call || !call->TryComplete(ok, err, close_conn))
+    if (!call || !call->TryComplete(ok, err, close_conn, error_code))
     {
         return;
     }

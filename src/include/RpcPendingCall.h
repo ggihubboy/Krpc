@@ -1,6 +1,8 @@
 #ifndef KRPC_PENDING_CALL_H
 #define KRPC_PENDING_CALL_H
 
+#include "RpcError.h"
+
 #include <google/protobuf/service.h>
 #include <muduo/net/EventLoop.h>
 #include <muduo/net/TcpConnection.h>
@@ -35,13 +37,17 @@ struct RpcPendingCall
 
     std::atomic<bool> completed{false};
     bool ok = false;
+    int error_code = kRpcOk;
     std::string err;
     std::mutex mu;
     std::condition_variable cv;
     bool result_published = false;
 
     // 先写入 ok/err 再发布。只有赢家返回 true。
-    bool TryComplete(bool success, const std::string &error, bool close_conn = false)
+    bool TryComplete(bool success,
+                     const std::string &error,
+                     bool close_conn = false,
+                     int code = kRpcInternal)
     {
         bool expected = false;
         if (!completed.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
@@ -50,6 +56,7 @@ struct RpcPendingCall
         }
         std::lock_guard<std::mutex> lock(mu);
         ok = success;
+        error_code = success ? kRpcOk : code;
         err = error;
         close_on_finish = close_conn;
         result_published = true;
@@ -80,7 +87,8 @@ struct RpcPendingCall
 void FinishRpcCall(const std::shared_ptr<RpcPendingCall> &call,
                    bool ok,
                    const std::string &err,
-                   bool close_conn = false);
+                   bool close_conn = false,
+                   int error_code = kRpcInternal);
 
 void ApplyRpcFinish(const std::shared_ptr<RpcPendingCall> &call);
 

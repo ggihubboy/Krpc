@@ -2,6 +2,7 @@
 #define KRPC_CONNECT_POOL_H
 
 #include "LockFreeQueue.h"
+#include "RpcError.h"
 
 #include <muduo/net/Buffer.h>
 #include <muduo/net/TcpClient.h>
@@ -57,7 +58,9 @@ private:
     static void OnMessage(const muduo::net::TcpConnectionPtr &conn,
                           muduo::net::Buffer *buffer,
                           muduo::Timestamp receive_time);
-    static void FailAllPending(const muduo::net::TcpConnectionPtr &conn, const std::string &err);
+    static void FailAllPending(const muduo::net::TcpConnectionPtr &conn,
+                               const std::string &err,
+                               int error_code = kRpcConnectFail);
 
     static constexpr int kMaxConnPerNode = 1024;
     static constexpr int kMaxConnecting = 16;

@@ -55,7 +55,8 @@ void TimeoutWheel::Scan()
             v.pop_back();
             continue;
         }
-        if (now >= sp->deadline_ms && sp->TryComplete(false, "rpc timeout", false))
+        if (now >= sp->deadline_ms &&
+            sp->TryComplete(false, "rpc timeout", false, kRpcTimeout))
         {
             v[i] = std::move(v.back());
             v.pop_back();

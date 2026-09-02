@@ -73,7 +73,9 @@ static void SetupNewConnection(const muduo::net::TcpConnectionPtr &conn)
     }
 }
 
-void KrpcConnectPool::FailAllPending(const muduo::net::TcpConnectionPtr &conn, const std::string &err)
+void KrpcConnectPool::FailAllPending(const muduo::net::TcpConnectionPtr &conn,
+                                    const std::string &err,
+                                    int error_code)
 {
     auto ctx = GetConnContext(conn);
     if (!ctx || ctx->pending.empty())
@@ -90,7 +92,7 @@ void KrpcConnectPool::FailAllPending(const muduo::net::TcpConnectionPtr &conn, c
     ctx->inflight.store(0, std::memory_order_relaxed);
     for (auto &call : calls)
     {
-        FinishRpcCall(call, false, err, false);
+        FinishRpcCall(call, false, err, false, error_code);
     }
 }
 
@@ -140,7 +142,7 @@ void KrpcConnectPool::OnMessage(const muduo::net::TcpConnectionPtr &conn,
         }
         if (st == RpcDecodeStatus::Corrupt)
         {
-            FailAllPending(conn, "rpc frame corrupt");
+            FailAllPending(conn, "rpc frame corrupt", kRpcBadRequest);
             conn->forceClose();
             return;
         }
@@ -148,7 +150,7 @@ void KrpcConnectPool::OnMessage(const muduo::net::TcpConnectionPtr &conn,
         Krpc::RpcMeta meta;
         if (!meta.ParseFromString(header_bytes))
         {
-            FailAllPending(conn, "rpc meta parse error");
+            FailAllPending(conn, "rpc meta parse error", kRpcBadRequest);
             conn->forceClose();
             return;
         }
@@ -170,16 +172,21 @@ void KrpcConnectPool::OnMessage(const muduo::net::TcpConnectionPtr &conn,
 
         if (meta.error_code() != 0)
         {
-            FinishRpcCall(call, false, meta.error_msg().empty() ? "rpc error" : meta.error_msg(), false);
+            FinishRpcCall(call,
+                          false,
+                          meta.error_msg().empty() ? "rpc error" : meta.error_msg(),
+                          false,
+                          meta.error_code());
             continue;
         }
         if (call->response == nullptr)
         {
-            FinishRpcCall(call, false, "null response", false);
+            FinishRpcCall(call, false, "null response", false, kRpcInternal);
             continue;
         }
         const bool ok = call->response->ParseFromString(payload);
-        FinishRpcCall(call, ok, ok ? "" : "Parse response error", !ok);
+        FinishRpcCall(call, ok, ok ? "" : "Parse response error", !ok,
+                      ok ? kRpcOk : kRpcBadRequest);
     }
 }
 

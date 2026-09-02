@@ -3,6 +3,7 @@
 #include "ConnContext.h"
 #include "KrpcConnectPool.h"
 #include "Krpcapplication.h"
+#include "Krpccontroller.h"
 #include "Krpcheader.pb.h"
 #include "RpcCodec.h"
 #include "RpcError.h"
@@ -24,12 +25,10 @@ static std::atomic<uint64_t> g_req_id{1};
 
 static void FailDone(google::protobuf::RpcController *controller,
                      google::protobuf::Closure *done,
+                     int error_code,
                      const std::string &err)
 {
-    if (controller)
-    {
-        controller->SetFailed(err);
-    }
+    SetRpcFailed(controller, error_code, err);
     if (done)
     {
         done->Run();
@@ -87,7 +86,7 @@ bool KrpcChannel::IssueOnce(const std::string &node,
     uint16_t port = 0;
     if (!ParseNode(node, &ip, &port))
     {
-        FailDone(controller, done, "invalid node address");
+        FailDone(controller, done, kRpcBadRequest, "invalid node address");
         return false;
     }
 
@@ -95,7 +94,7 @@ bool KrpcChannel::IssueOnce(const std::string &node,
     auto conn = KrpcConnectPool::GetInstance().BorrowConnection(ip, port, borrow_timeout);
     if (!conn)
     {
-        FailDone(controller, done, "Borrow connection from pool failed!");
+        FailDone(controller, done, kRpcConnectFail, "Borrow connection from pool failed!");
         CircuitBreaker::Instance().RecordFailure(node);
         return false;
     }
@@ -118,7 +117,7 @@ bool KrpcChannel::IssueOnce(const std::string &node,
         }
         if (!conn->connected())
         {
-            FinishRpcCall(pending, false, "connection closed before send", true);
+            FinishRpcCall(pending, false, "connection closed before send", true, kRpcConnectFail);
             return;
         }
         auto ctx = EnsureConnContext(conn);
@@ -145,16 +144,16 @@ bool KrpcChannel::IssueOnce(const std::string &node,
     {
         if (!pending->Wait(timeout_ms))
         {
-            if (pending->TryComplete(false, "rpc timeout", false))
+            if (pending->TryComplete(false, "rpc timeout", false, kRpcTimeout))
             {
-                controller->SetFailed("rpc timeout");
+                SetRpcFailed(controller, kRpcTimeout, "rpc timeout");
                 pending->loop->queueInLoop([pending]() { ApplyRpcFinish(pending); });
                 return false;
             }
         }
         if (!pending->ok)
         {
-            controller->SetFailed(pending->err);
+            SetRpcFailed(controller, pending->error_code, pending->err);
             return false;
         }
         return true;
@@ -178,7 +177,7 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     std::string payload;
     if (!BuildPayload(method, request, req_id, &payload))
     {
-        FailDone(controller, done, "Serialize request fail");
+        FailDone(controller, done, kRpcBadRequest, "Serialize request fail");
         return;
     }
 
@@ -189,7 +188,7 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     std::string node = pick_node("");
     if (node.empty())
     {
-        FailDone(controller, done, "Hash ring returned empty node!");
+        FailDone(controller, done, kRpcNoService, "Hash ring returned empty node!");
         return;
     }
 
@@ -198,7 +197,7 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
         const std::string alt = pick_node(node);
         if (alt.empty() || !CircuitBreaker::Instance().AllowRequest(alt))
         {
-            FailDone(controller, done, "circuit open");
+            FailDone(controller, done, kRpcCircuitOpen, "circuit open");
             return;
         }
         node = alt;
@@ -220,7 +219,7 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     std::string retry_payload;
     if (!BuildPayload(method, request, retry_id, &retry_payload))
     {
-        controller->SetFailed("Serialize request fail");
+        SetRpcFailed(controller, kRpcBadRequest, "Serialize request fail");
         return;
     }
     IssueOnce(alt, retry_payload, retry_id, controller, response, nullptr, timeout_ms);

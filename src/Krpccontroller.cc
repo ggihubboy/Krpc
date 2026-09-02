@@ -3,12 +3,14 @@
 // 构造函数，初始化控制器状态
 Krpccontroller::Krpccontroller() {
     m_failed = false;  // 初始状态为未失败
+    m_error_code = kRpcOk;
     m_errText = "";    // 错误信息初始为空
 }
 
 // 重置控制器状态，将失败标志和错误信息清空
 void Krpccontroller::Reset() {
     m_failed = false;  // 重置失败标志
+    m_error_code = kRpcOk;
     m_errText = "";    // 清空错误信息
 }
 
@@ -24,8 +26,31 @@ std::string Krpccontroller::ErrorText() const {
 
 // 设置RPC调用失败，并记录失败原因
 void Krpccontroller::SetFailed(const std::string &reason) {
+    SetFailed(kRpcInternal, reason);
+}
+
+void Krpccontroller::SetFailed(int error_code, const std::string &reason) {
     m_failed = true;   // 设置失败标志
+    m_error_code = error_code;
     m_errText = reason; // 记录失败原因
+}
+
+int Krpccontroller::ErrorCode() const {
+    return m_error_code;
+}
+
+void SetRpcFailed(google::protobuf::RpcController *controller,
+                  int error_code,
+                  const std::string &reason) {
+    if (controller == nullptr) {
+        return;
+    }
+    auto *krpc_controller = dynamic_cast<Krpccontroller *>(controller);
+    if (krpc_controller != nullptr) {
+        krpc_controller->SetFailed(error_code, reason);
+        return;
+    }
+    controller->SetFailed(reason);
 }
 
 // 以下功能未实现，是RPC服务端提供的取消功能

@@ -1,7 +1,9 @@
 #include "CircuitBreaker.h"
 #include "ConsistentHash.h"
+#include "Krpccontroller.h"
 #include "LockFreeQueue.h"
 #include "RpcCodec.h"
+#include "RpcError.h"
 #include "RpcPendingCall.h"
 
 #include <muduo/net/Buffer.h>
@@ -132,11 +134,12 @@ static void TestPendingCompleteOnce()
     auto delayed = std::make_shared<RpcPendingCall>();
     std::thread publisher([delayed]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        delayed->TryComplete(false, "expected failure", true);
+        delayed->TryComplete(false, "expected failure", true, kRpcTimeout);
     });
     Expect(delayed->Wait(100), "wait wakes after publication");
     publisher.join();
     Expect(!delayed->ok && delayed->err == "expected failure", "published error visible");
+    Expect(delayed->error_code == kRpcTimeout, "published error code visible");
     Expect(delayed->close_on_finish, "published close flag visible");
 
     auto raced = std::make_shared<RpcPendingCall>();
@@ -156,6 +159,23 @@ static void TestPendingCompleteOnce()
         racer.join();
     }
     Expect(winners.load(std::memory_order_relaxed) == 1, "concurrent completion has one winner");
+}
+
+static void TestStructuredControllerError()
+{
+    Krpccontroller controller;
+    Expect(controller.ErrorCode() == kRpcOk, "new controller has ok code");
+    controller.SetFailed(kRpcTimeout, "rpc timeout");
+    Expect(controller.Failed(), "structured failure marks controller failed");
+    Expect(controller.ErrorCode() == kRpcTimeout, "structured failure preserves error code");
+    Expect(controller.ErrorText() == "rpc timeout", "structured failure preserves message");
+    controller.Reset();
+    Expect(!controller.Failed(), "reset clears failure");
+    Expect(controller.ErrorCode() == kRpcOk, "reset clears error code");
+
+    google::protobuf::RpcController *base = &controller;
+    SetRpcFailed(base, kRpcConnectFail, "connect failed");
+    Expect(controller.ErrorCode() == kRpcConnectFail, "generic controller helper preserves code");
 }
 
 static void TestHashWriteSerialized()
@@ -207,6 +227,7 @@ int main()
     TestEncodeDecode();
     TestCircuitHalfOpen();
     TestPendingCompleteOnce();
+    TestStructuredControllerError();
     TestHashWriteSerialized();
     TestMpmc();
     if (g_failed != 0)
