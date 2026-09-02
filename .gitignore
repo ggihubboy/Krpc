@@ -19,6 +19,7 @@
 /bin/client
 /bin/server
 /bin/krpc_tests
+/bin/krpc_bench
 
 # Runtime and glog output
 *.log

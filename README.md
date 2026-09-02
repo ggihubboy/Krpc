@@ -5,7 +5,7 @@
 C++ RPC 学习骨架：Muduo + Protobuf + ZooKeeper。  
 **这是给校招/作品集用的学习版，不是生产框架。** 没有 TLS、没有鉴权；ZooKeeper ACL 仍是开放的。
 
-当前版本相对上一轮补了协议校验、错误回包、连接内多路复用、熔断 Half-Open、ZK 会话恢复、过载保护和优雅退出。用 `bin/krpc_tests` 做回归，不要只拿空 Login 压测当正确性证明。
+当前版本补了协议校验、错误回包、连接内多路复用、熔断 Half-Open、ZK 会话恢复、过载保护、优雅退出 drain、结构化错误码、发送前失败换节点，以及进程内 QPS/延迟计数。用 `ctest` 做回归，不要只拿空 Login 压测当正确性证明。
 
 ## 能做什么
 
@@ -16,14 +16,15 @@ C++ RPC 学习骨架：Muduo + Protobuf + ZooKeeper。
 - 客户端连接池：一条 TCP 上可以同时挂多个 RPC（`request_id`），空闲连接走 MPMC 队列
 - 同步超时在调用线程 `wait_for`；异步超时用每条 EventLoop 10ms 扫描
 - 按节点熔断（Closed / Open / Half-Open，探测只放行 1 个）
-- 包过大、长度溢出、header 损坏会关连接；方法不存在等业务错误会回错误帧
-- 服务端队列过载直接拒绝；`SIGINT`/`SIGTERM` 退出时关掉 ZK（临时节点消失）
+- `SIGINT`/`SIGTERM` 后停止接收新请求，等待在途 RPC 完成或超过 `server_shutdown_grace_ms`
+- 客户端能读到稳定 `error_code`；仅发送前连接失败会换一个节点再试一次
+- 进程内记录请求数、错误分类和固定桶近似 P50/P95/P99；可用 `enable_access_log=1` 打开 `request_id` 日志
 
 ## 明确不做
 
 - TLS / 鉴权 / 业务 Fallback
 - 滑动窗口失败率熔断
-- 完整的分布式追踪和直方图指标
+- 完整的分布式追踪和 Prometheus 导出
 - IPv6 字面量地址（`ip:port` 按最后一个 `:` 切开，仅按 IPv4 来用）
 
 ## 架构
@@ -76,6 +77,7 @@ total_len = 4 + header_len + payload 长度（不含最前面 4 字节）
 | `max_inflight_per_conn` | 每条连接同时未完成 RPC 上限 | 32 |
 | `server_max_pending` | 服务端线程池排队上限，超出回过载错误 | 4096 |
 | `server_shutdown_grace_ms` | 停止注册后等待在途请求完成的最长时间 | 5000 |
+| `enable_access_log` | `1` 打印带 `request_id` 的访问日志 | 0 |
 
 ## 客户端
 
@@ -103,7 +105,7 @@ KrpcConnectPool::GetInstance().WarmUp(ip, port, KrpcApplication::CpuCores());
 ## 服务端
 
 `NotifyService` 后 `Run()`。未实现的方法（例如示例里的 `Register`）会通过非空 `controller` 回错误帧，而不是空指针崩溃。  
-`Ctrl+C` 或 `SIGTERM` 会退出事件循环、关掉 ZK 客户端（临时节点消失）。
+`Ctrl+C` 或 `SIGTERM` 会停止 ZooKeeper 注册、拒绝新请求，并在 `server_shutdown_grace_ms` 内等待在途业务结束。
 
 对象池仍要求：借出的 `request`/`response`/`Closure` 在**同一条业务线程**归还。如果业务自己把 `done` 丢到别的线程再 `Run()`，不要用这个池。
 
@@ -151,13 +153,20 @@ ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
   ctest --test-dir build-asan --output-on-failure
 ```
 
-功能示例需要先启动 ZooKeeper，再分别启动服务端和客户端：
+一键演示（Docker 启动 ZooKeeper，再起两个 server，跑 Login + EchoBlob）：
 
 ```bash
-# 先启动 ZooKeeper，再启动 server，再启动 client
-./build/bin/server -i bin/test.conf
-./build/bin/client -i bin/test.conf
+./scripts/demo.sh
 ```
+
+压测（需要已经有 ZooKeeper 和 server）：
+
+```bash
+KRPC_BENCH_THREADS=4 KRPC_BENCH_REQUESTS=5000 ./scripts/bench.sh
+KRPC_BENCH_PAYLOAD=32768 KRPC_BENCH_REQUESTS=200 ./scripts/bench.sh
+```
+
+结果记录模板见 [docs/benchmark-results.md](docs/benchmark-results.md)。
 
 改 `example/user.proto` 后：
 
@@ -184,7 +193,8 @@ mv Krpcheader.pb.h include/
 | `Krpcchannel` | 同步 `wait_for`，异步 TimeoutWheel；失败必调 done |
 | `ConsistentHash` / `ServiceDiscovery` | COW 读 + 写锁；ZK 重连后刷新 |
 | `CircuitBreaker` | 按节点；Half-Open 只放行 1 个探测 |
-| `Krpcprovider` | 拆包、过载拒绝、错误回包、优雅退出 |
+| `Krpcprovider` | 拆包、过载拒绝、错误回包、优雅退出 drain |
+| `RpcMetrics` | 进程内计数器和固定桶延迟分位 |
 | `zookeeperutil` | 每客户端独立会话；过期后重建并重放 Create/Watch |
 | `ZeroCopySend` | 阈值以上 `MSG_ZEROCOPY`（可选路径，不是正确性前提） |
 
@@ -193,4 +203,5 @@ mv Krpcheader.pb.h include/
 - 零拷贝仍依赖建连时扫 `/proc/self/fd` 找套接字，虚机上内核可能 `copied=1`
 - 熔断仍是连续失败次数，不是时间窗失败率
 - 自动换节点仅覆盖发送前连接失败；超时、断连和服务端错误不会隐式重放
-- 没有 ASan 流水线；本地可用 `-fsanitize=address` 自行编一版
+- 大包连接仍和 Muduo `outputBuffer` 共用 fd，不另建自管 socket
+- GitHub Actions 会跑 Debug/Release/ASan 单元测试；ZooKeeper 集成演示需要本地 Docker

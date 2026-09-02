@@ -1,7 +1,8 @@
 # Krpc 后续优化实施计划
 
 阶段 1～6 已经落地（同步 `wait_for`、每 loop tick、TLS 对象池、ZK 去 N+1、keepalive、阈值 `MSG_ZEROCOPY`）。  
-本文保留原施工说明，方便对照代码；**还没做的只有阶段 7（可选）**。
+阶段 7 只做了**发送前失败换节点**；滑动窗口熔断和 `SetFallback` 明确不做。  
+就业向补强（CI、结构化错误码、graceful drain、指标、演示脚本）见 [README.md](README.md)。
 
 已经更早完成的部分（无锁连接池、COW 哈希环、Muduo 异步客户端、用户态少拷贝、超时熔断、多 EventLoop）见 [README.md](README.md)。
 
@@ -19,7 +20,7 @@
 | 阶段 4 | ZK `GetChildren` 去掉 N+1 次 `GetData` | Watcher 更新从 N+1 次变成 1 次 | 0.5 天 | 已落地 |
 | 阶段 5 | TCP keepalive + 空闲连接剔除 | 避免借到僵尸连接 | 0.5 天 | 已落地 |
 | 阶段 6 | **内核零拷贝（阈值路径）** | 大包减少内核拷贝；小包走原路径 | 1～2 天 | 已落地 |
-| 阶段 7 | 异步失败换节点 / 滑动窗口熔断 | 功能完整（可选） | 1 天 | 未做 |
+| 阶段 7 | 异步失败换节点 / 滑动窗口熔断 | 功能完整（可选） | 1 天 | 部分完成：仅发送前失败换节点 |
 
 # Krpc 后续优化实施计划
 
@@ -41,7 +42,7 @@
 | 阶段 4 | ZK `GetChildren` 去掉 N+1 次 `GetData` | **已完成** | `zookeeperutil.cc` 直接 `push_back(nodes.data[i])` |
 | 阶段 5 | TCP keepalive + 空闲连接剔除 | **已完成** | `TcpSockUtil.cc` 设 keepalive；`ConnContext.last_idle_ms`；`BorrowConnection` 超时空闲则 `forceClose` |
 | 阶段 6 | 阈值 `MSG_ZEROCOPY` | **已完成（有降级）** | 新建 `ZeroCopySend.cc`；请求/响应 ≥ 16KB 才走；Login 小包不走 |
-| 阶段 7 | 异步换节点 / 滑动窗口熔断 | **未做（可选）** | 现在仍是：同步失败才换节点；熔断只看连续失败次数 |
+| 阶段 7 | 异步换节点 / 滑动窗口熔断 | **部分完成** | 发送前 `kRpcConnectFail` 会换一个节点；滑动窗口熔断和 `SetFallback` 不做 |
 
 新增文件：`TimeoutWheel`、`RpcObjectPool`、`ConnContext`、`TcpSockUtil`、`ZeroCopySend`。  
 配置新增：`tcp_keepalive_idle_s`、`conn_idle_evict_ms`、`zerocopy_threshold`、`enable_zerocopy`（见 `bin/test.conf`）。  
@@ -100,8 +101,9 @@ IO 线程必须先把 Muduo buffer 里的参数拷走，才能 `retrieve`。现�
 
 ### 6. 还没做、文档里仍算缺口
 
-- 阶段 7：异步失败不换节点；熔断不是时间窗失败率；没有 `SetFallback`
-- 没有单独做「服务端卡住看超时」和「双实例 ZK Watcher」的自动化用例（Login / EchoBlob 已人工跑过）
+- 阶段 7：滑动窗口失败率熔断和 `SetFallback` 不做；发送前连接失败会换一个节点
+- 大包连接仍和 Muduo 共用 fd；更干净的自管 socket 暂缓
+- 没有单独做「服务端卡住看超时」和「双实例 ZK Watcher」的自动化用例（可用 `scripts/demo.sh` 人工演示）
 - 没有 ASan 版测对端 RST
 - 长期更干净的做法仍是：大包连接自管 socket，不和 Muduo `outputBuffer` 共用 fd
 

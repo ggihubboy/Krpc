@@ -1,49 +1,12 @@
 #include "Krpcapplication.h"
-#include "../user.pb.h"
+#include "KrpcClientIo.h"
+#include "KrpcConnectPool.h"
 #include "Krpccontroller.h"
 #include "KrpcLogger.h"
-#include "KrpcConnectPool.h"
-#include "KrpcClientIo.h"
+#include "../user.pb.h"
 
-#include <algorithm>
-#include <atomic>
-#include <chrono>
 #include <cstdlib>
 #include <iostream>
-#include <thread>
-#include <vector>
-
-void send_request(int thread_id, std::atomic<int> &success_count, std::atomic<int> &fail_count, int requests_per_thread)
-{
-    (void)thread_id;
-    Kuser::UserServiceRpc_Stub stub(new KrpcChannel(false), google::protobuf::Service::STUB_OWNS_CHANNEL);
-
-    Kuser::LoginRequest request;
-    request.set_name("zhangsan");
-    request.set_pwd("123456");
-
-    Kuser::LoginResponse response;
-    Krpccontroller controller;
-
-    for (int i = 0; i < requests_per_thread; ++i)
-    {
-        controller.Reset();
-        stub.Login(&controller, &request, &response, nullptr);
-
-        if (controller.Failed())
-        {
-            fail_count++;
-        }
-        else if (int{} == response.result().errcode())
-        {
-            success_count++;
-        }
-        else
-        {
-            fail_count++;
-        }
-    }
-}
 
 int main(int argc, char **argv)
 {
@@ -52,58 +15,41 @@ int main(int argc, char **argv)
     KrpcLogger logger("MyRPC");
 
     std::string ip = KrpcApplication::GetConfig().Load("rpcserverip");
-    uint16_t port = static_cast<uint16_t>(atoi(KrpcApplication::GetConfig().Load("rpcserverport").c_str()));
+    uint16_t port =
+        static_cast<uint16_t>(std::atoi(KrpcApplication::GetConfig().Load("rpcserverport").c_str()));
+    KrpcConnectPool::GetInstance().WarmUp(ip, port, 1);
 
-    const int thread_count = KrpcApplication::CpuCores();
-    const int io_threads = KrpcApplication::ClientIoThreads();
-    const int requests_per_thread = std::max(1000, 100000 / thread_count);
+    Kuser::UserServiceRpc_Stub stub(new KrpcChannel(false),
+                                    google::protobuf::Service::STUB_OWNS_CHANNEL);
 
-    KrpcConnectPool::GetInstance().WarmUp(ip, port, thread_count);
-
-    LOG(INFO) << "cpu_cores=" << thread_count
-              << " client_io_loops=" << io_threads
-              << " client_threads=" << thread_count
-              << " requests_per_thread=" << requests_per_thread;
-
-    std::vector<std::thread> threads;
-    std::atomic<int> success_count(0);
-    std::atomic<int> fail_count(0);
-
-    auto start_time = std::chrono::high_resolution_clock::now();
-
-    for (int i = 0; i < thread_count; i++)
+    Kuser::LoginRequest login_req;
+    login_req.set_name("zhangsan");
+    login_req.set_pwd("123456");
+    Kuser::LoginResponse login_resp;
+    Krpccontroller login_ctrl;
+    stub.Login(&login_ctrl, &login_req, &login_resp, nullptr);
+    if (login_ctrl.Failed() || login_resp.result().errcode() != 0)
     {
-        threads.emplace_back([i, &success_count, &fail_count, requests_per_thread]() {
-            send_request(i, success_count, fail_count, requests_per_thread);
-        });
+        std::cerr << "Login failed: " << login_ctrl.ErrorText() << std::endl;
+        KrpcConnectPool::GetInstance().Shutdown();
+        KrpcClientIo::Instance().Stop();
+        return 1;
     }
+    std::cout << "Login ok" << std::endl;
 
-    for (auto &t : threads)
+    Kuser::EchoBlobRequest blob_req;
+    blob_req.set_body(std::string(32 * 1024, 'a'));
+    Kuser::EchoBlobResponse blob_resp;
+    Krpccontroller blob_ctrl;
+    stub.EchoBlob(&blob_ctrl, &blob_req, &blob_resp, nullptr);
+    if (blob_ctrl.Failed() || blob_resp.body().size() != blob_req.body().size())
     {
-        t.join();
+        std::cerr << "EchoBlob failed: " << blob_ctrl.ErrorText() << std::endl;
+        KrpcConnectPool::GetInstance().Shutdown();
+        KrpcClientIo::Instance().Stop();
+        return 1;
     }
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed = end_time - start_time;
-    const int total = thread_count * requests_per_thread;
-
-    LOG(INFO) << "Total requests: " << total;
-    LOG(INFO) << "Success count: " << success_count;
-    LOG(INFO) << "Fail count: " << fail_count;
-    LOG(INFO) << "Elapsed time: " << elapsed.count() << " seconds";
-    LOG(INFO) << "QPS: " << total / elapsed.count();
-
-    if (KrpcApplication::EnableZeroCopy())
-    {
-        Kuser::UserServiceRpc_Stub stub(new KrpcChannel(false), google::protobuf::Service::STUB_OWNS_CHANNEL);
-        Kuser::EchoBlobRequest blob_req;
-        blob_req.set_body(std::string(32 * 1024, 'a'));
-        Kuser::EchoBlobResponse blob_resp;
-        Krpccontroller blob_ctrl;
-        stub.EchoBlob(&blob_ctrl, &blob_req, &blob_resp, nullptr);
-        LOG(INFO) << "EchoBlob 32KB " << (blob_ctrl.Failed() ? blob_ctrl.ErrorText() : "ok")
-                  << " echo_size=" << blob_resp.body().size();
-    }
+    std::cout << "EchoBlob ok echo_size=" << blob_resp.body().size() << std::endl;
 
     KrpcConnectPool::GetInstance().Shutdown();
     KrpcClientIo::Instance().Stop();
