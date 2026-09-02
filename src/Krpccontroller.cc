@@ -41,5 +41,6 @@ bool Krpccontroller::IsCanceled() const {
 
 // 注册取消回调函数（未实现）
 void Krpccontroller::NotifyOnCancel(google::protobuf::Closure* callback) {
+    (void)callback;
     // 目前为空，未实现具体功能
 }

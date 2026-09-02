@@ -1,5 +1,7 @@
 # CMake out-of-source builds and generated metadata
 /build/
+/build-*/
+/.deps/
 **/CMakeFiles/
 **/CMakeCache.txt
 **/cmake_install.cmake

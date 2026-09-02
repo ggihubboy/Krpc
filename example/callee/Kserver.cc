@@ -31,6 +31,7 @@ public:
                ::Kuser::LoginResponse *response,
                ::google::protobuf::Closure *done)
     {
+        (void)controller;
         // 从请求中获取用户名和密码
         std::string name = request->name();
         std::string pwd = request->pwd();

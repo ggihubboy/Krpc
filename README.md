@@ -1,5 +1,7 @@
 # Krpc
 
+[![CI](https://github.com/ggihubboy/Krpc/actions/workflows/ci.yml/badge.svg)](https://github.com/ggihubboy/Krpc/actions/workflows/ci.yml)
+
 C++ RPC 学习骨架：Muduo + Protobuf + ZooKeeper。  
 **这是给校招/作品集用的学习版，不是生产框架。** 没有 TLS、没有鉴权；ZooKeeper ACL 仍是开放的。
 
@@ -102,16 +104,54 @@ KrpcConnectPool::GetInstance().WarmUp(ip, port, KrpcApplication::CpuCores());
 
 ## 编译与运行
 
-依赖：C++20、Protobuf、Muduo、ZooKeeper C 客户端、glog。
+依赖：Linux、CMake 3.16+、支持 C++20 的 GCC/Clang、Protobuf、Muduo
+2.0.2、ZooKeeper C 客户端和 glog。
+
+Ubuntu 20.04/22.04 先安装系统依赖：
 
 ```bash
-cd Krpc/build
-cmake ..
-make -j
-./../bin/krpc_tests
+sudo apt-get update
+sudo apt-get install -y build-essential cmake git \
+  libboost-dev libboost-test-dev \
+  libgoogle-glog-dev libprotobuf-dev protobuf-compiler \
+  libzookeeper-mt-dev
+```
+
+Ubuntu 官方仓库不提供 Muduo 开发包。项目脚本会把固定版本安装到用户目录，
+不覆盖系统文件：
+
+```bash
+./scripts/install_muduo.sh "$HOME/.local"
+```
+
+构建并运行离线测试：
+
+```bash
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$HOME/.local"
+cmake --build build -j2
+ctest --test-dir build --output-on-failure
+```
+
+需要检查内存安全时使用独立的 ASan 构建目录：
+
+```bash
+cmake -S . -B build-asan \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_PREFIX_PATH="$HOME/.local" \
+  -DKRPC_ENABLE_ASAN=ON
+cmake --build build-asan -j2
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+  ctest --test-dir build-asan --output-on-failure
+```
+
+功能示例需要先启动 ZooKeeper，再分别启动服务端和客户端：
+
+```bash
 # 先启动 ZooKeeper，再启动 server，再启动 client
-./../bin/server -i ../bin/test.conf
-./../bin/client -i ../bin/test.conf
+./build/bin/server -i bin/test.conf
+./build/bin/client -i bin/test.conf
 ```
 
 改 `example/user.proto` 后：

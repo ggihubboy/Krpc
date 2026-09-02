@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Debug
+            build_type: Debug
+            asan: "OFF"
+          - name: Release
+            build_type: Release
+            asan: "OFF"
+          - name: ASan
+            build_type: Debug
+            asan: "ON"
+
+    env:
+      MUDUO_PREFIX: ${{ github.workspace }}/.deps/muduo
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential cmake git \
+            libboost-dev libboost-test-dev \
+            libgoogle-glog-dev \
+            libprotobuf-dev protobuf-compiler \
+            libzookeeper-mt-dev
+
+      - name: Cache Muduo
+        id: cache-muduo
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MUDUO_PREFIX }}
+          key: muduo-v2.0.2-ubuntu-22.04
+
+      - name: Build Muduo
+        if: steps.cache-muduo.outputs.cache-hit != 'true'
+        run: ./scripts/install_muduo.sh "${MUDUO_PREFIX}"
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_PREFIX_PATH="${MUDUO_PREFIX}" \
+            -DKRPC_ENABLE_ASAN=${{ matrix.asan }}
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        run: ctest --test-dir build --output-on-failure
