@@ -1,20 +1,28 @@
 #ifndef SERVICE_DISCOVERY_H
 #define SERVICE_DISCOVERY_H
 
-#include "zookeeperutil.h"
 #include "ConsistentHash.h"
+#include "zookeeperutil.h"
+
+#include <memory>
+#include <mutex>
 #include <string>
-#include <vector>
 #include <unordered_map>
-#include <unordered_set>
-#include <shared_mutex> // 引入读写锁头文件
+#include <vector>
+
+struct DiscoverySnapshot
+{
+    std::unordered_map<std::string, std::shared_ptr<ConsistentHash>> services;
+};
 
 class ServiceDiscovery
 {
 public:
     static ServiceDiscovery &GetInstance();
     void Init();
-    std::string GetTargetNode(const std::string &service_name, const std::string &key);
+    std::string GetTargetNode(const std::string &service_name,
+                              const std::string &key,
+                              const std::string &exclude = "");
 
 private:
     ServiceDiscovery() = default;
@@ -22,15 +30,14 @@ private:
     ServiceDiscovery(const ServiceDiscovery &) = delete;
     ServiceDiscovery &operator=(const ServiceDiscovery &) = delete;
 
+    std::shared_ptr<ConsistentHash> EnsureServiceLocked(const std::string &service_name,
+                                                        const std::vector<std::string> &nodes);
+
     ZkClient m_zkClient;
-    std::unordered_map<std::string, std::unique_ptr<ConsistentHash>> m_chash_map; 
-    std::unordered_map<std::string, std::vector<std::string>> m_nodes_cache;      
-    
-    
-    std::shared_timed_mutex m_rw_mtx; 
+    std::shared_ptr<const DiscoverySnapshot> m_snapshot;
+    std::mutex m_init_mtx;
 
     static void WatcherCallback(zhandle_t *zh, int type, int state, const char *path, void *watcherCtx);
-    void UpdateCacheLocked(const std::string &service_name, const std::string &path);
 };
 
 #endif

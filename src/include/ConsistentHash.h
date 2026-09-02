@@ -1,70 +1,55 @@
 #ifndef CONSISTENT_HASH_H
 #define CONSISTENT_HASH_H
 
-#include <vector>
+#include <atomic>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
-#include <algorithm>
-#include <shared_mutex>
-#include <atomic> // C++11 支持原子操作
-#include <thread> // C++11 支持线程
-#include <functional>
-#include <cmath>
-#include <mutex>   
-// 一致性哈希配置
+#include <vector>
+
 struct HashConfig
 {
-    int replicas;             // 初始每个节点的虚拟节点数
-    int min_replicas;         // 最小虚拟节点数限制
-    int max_replicas;         // 最大虚拟节点数限制
-    double balance_threshold; // 负载不均阈值 (例如 0.25)
+    int replicas = 10;
+    int min_replicas = 5;
+    int max_replicas = 200;
+    double balance_threshold = 0.25;
+};
+
+// 不可变哈希环快照：读路径 atomic_load 后无锁二分。
+struct HashRingSnapshot
+{
+    std::vector<uint32_t> keys;
+    std::unordered_map<uint32_t, std::string> ring;
+    std::unordered_map<std::string, int> node_replicas;
+    std::unordered_map<std::string, std::shared_ptr<std::atomic<long long>>> node_counts;
 };
 
 class ConsistentHash
 {
 public:
-    // 构造函数
-    ConsistentHash(HashConfig cfg = {10, 5, 200, 0.25});
-
-    // 析构函数
+    explicit ConsistentHash(HashConfig cfg = HashConfig{});
     ~ConsistentHash();
 
-    // 添加节点
     void AddNodes(const std::vector<std::string> &nodes);
-
-    // 移除节点
     void RemoveNode(const std::string &node);
-
-    // 根据 Key 获取节点
-    std::string GetTargetNode(const std::string &key);
-
     void UpdateNodes(const std::vector<std::string> &nodes);
-    // 获取统计信息
+
+    // exclude 非空时跳过该物理节点，用于熔断后换节点。
+    std::string GetTargetNode(const std::string &key, const std::string &exclude = "");
+
     std::unordered_map<std::string, double> GetStats();
 
 private:
-    // CRC32 哈希
-    uint32_t hash_func(const std::string &data);
+    uint32_t hash_func(const std::string &data) const;
+    void fill_node(HashRingSnapshot &snap, const std::string &node, int replicas) const;
+    void publish(std::shared_ptr<const HashRingSnapshot> snap);
+    std::shared_ptr<const HashRingSnapshot> load() const;
 
-    // 内部逻辑
-    void add_node_internal(const std::string &node, int replicas);
-    void start_balancer();
-    void check_and_rebalance();
-    void rebalance_logic();
-
-private:
     HashConfig m_config;
-
-    std::vector<uint32_t> m_keys;
-    std::unordered_map<uint32_t, std::string> m_ring;
-
-    std::unordered_map<std::string, int> m_node_replicas;
-    std::atomic<long long> m_total_requests;
-
-    std::unordered_map<std::string, std::shared_ptr<std::atomic<long long>>> m_node_counts;
-    mutable std::shared_timed_mutex m_rw_mtx;
-    std::thread m_balancer_thread;
-    std::atomic<bool> m_stop_balancer;
+    std::shared_ptr<const HashRingSnapshot> m_snapshot;
+    std::mutex m_write_mu;
+    std::atomic<long long> m_total_requests{0};
 };
 
 #endif

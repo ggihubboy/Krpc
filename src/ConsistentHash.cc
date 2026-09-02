@@ -1,4 +1,6 @@
 #include "ConsistentHash.h"
+
+#include <algorithm>
 #include <iostream>
 
 // CRC32 查找表 (完整版)
@@ -261,7 +263,7 @@ static const uint32_t kCrc32Table[256] = {
     0x2d02ef8d,
 };
 
-uint32_t ConsistentHash::hash_func(const std::string &data)
+uint32_t ConsistentHash::hash_func(const std::string &data) const
 {
     uint32_t crc = 0xFFFFFFFF;
     for (size_t i = 0; i < data.length(); ++i)
@@ -272,215 +274,175 @@ uint32_t ConsistentHash::hash_func(const std::string &data)
 }
 
 ConsistentHash::ConsistentHash(HashConfig cfg)
-    : m_config(cfg), m_total_requests(0), m_stop_balancer(false)
+    : m_config(cfg)
 {
-    start_balancer();
+    auto empty = std::make_shared<HashRingSnapshot>();
+    std::atomic_store_explicit(&m_snapshot, std::shared_ptr<const HashRingSnapshot>(std::move(empty)),
+                               std::memory_order_relaxed);
 }
 
-ConsistentHash::~ConsistentHash()
+ConsistentHash::~ConsistentHash() = default;
+
+std::shared_ptr<const HashRingSnapshot> ConsistentHash::load() const
 {
-    m_stop_balancer = true;
-    if (m_balancer_thread.joinable())
-    {
-        m_balancer_thread.join();
-    }
+    return std::atomic_load_explicit(&m_snapshot, std::memory_order_acquire);
 }
 
-void ConsistentHash::add_node_internal(const std::string &node, int replicas)
+void ConsistentHash::publish(std::shared_ptr<const HashRingSnapshot> snap)
+{
+    std::atomic_store_explicit(&m_snapshot, std::move(snap), std::memory_order_release);
+}
+
+void ConsistentHash::fill_node(HashRingSnapshot &snap, const std::string &node, int replicas) const
 {
     for (int i = 0; i < replicas; ++i)
     {
-        std::string virtual_name = node + "#" + std::to_string(i);
-        uint32_t h = hash_func(virtual_name);
-        m_keys.push_back(h);
-        m_ring[h] = node;
+        const uint32_t h = hash_func(node + "#" + std::to_string(i));
+        snap.keys.push_back(h);
+        snap.ring[h] = node;
     }
-    m_node_replicas[node] = replicas;
-    if (m_node_counts.find(node) == m_node_counts.end())
+    snap.node_replicas[node] = replicas;
+    if (snap.node_counts.find(node) == snap.node_counts.end())
     {
-        m_node_counts[node] = std::make_shared<std::atomic<long long>>(0);
+        snap.node_counts[node] = std::make_shared<std::atomic<long long>>(0);
     }
 }
 
 void ConsistentHash::AddNodes(const std::vector<std::string> &nodes)
 {
-   std::unique_lock<std::shared_timed_mutex> lock(m_rw_mtx);
-    for (size_t i = 0; i < nodes.size(); ++i)
+    std::lock_guard<std::mutex> lock(m_write_mu);
+    auto old_snap = load();
+    auto next = std::make_shared<HashRingSnapshot>();
+    if (old_snap)
     {
-        if (!nodes[i].empty())
-        {
-            add_node_internal(nodes[i], m_config.replicas);
-        }
+        *next = *old_snap;
     }
-    std::sort(m_keys.begin(), m_keys.end());
+    for (const auto &node : nodes)
+    {
+        if (node.empty() || next->node_replicas.count(node) != 0)
+        {
+            continue;
+        }
+        fill_node(*next, node, m_config.replicas);
+    }
+    std::sort(next->keys.begin(), next->keys.end());
+    publish(std::move(next));
 }
 
 void ConsistentHash::RemoveNode(const std::string &node)
 {
-   std::unique_lock<std::shared_timed_mutex> lock(m_rw_mtx);
-    auto it_rep = m_node_replicas.find(node);
-    if (it_rep == m_node_replicas.end())
-        return;
-
-    int replicas = it_rep->second;
-    for (int i = 0; i < replicas; ++i)
+    std::lock_guard<std::mutex> lock(m_write_mu);
+    auto old_snap = load();
+    if (!old_snap || old_snap->node_replicas.count(node) == 0)
     {
-        uint32_t h = hash_func(node + "#" + std::to_string(i));
-        m_ring.erase(h);
-        auto it_vec = std::remove(m_keys.begin(), m_keys.end(), h);
-        m_keys.erase(it_vec, m_keys.end());
+        return;
     }
-    m_node_replicas.erase(node);
-    m_node_counts.erase(node);
+    auto next = std::make_shared<HashRingSnapshot>();
+    next->node_replicas = old_snap->node_replicas;
+    next->node_counts = old_snap->node_counts;
+    next->node_replicas.erase(node);
+    next->node_counts.erase(node);
+    for (const auto &pair : next->node_replicas)
+    {
+        fill_node(*next, pair.first, pair.second);
+    }
+    std::sort(next->keys.begin(), next->keys.end());
+    publish(std::move(next));
 }
 
-std::string ConsistentHash::GetTargetNode(const std::string &key)
+void ConsistentHash::UpdateNodes(const std::vector<std::string> &nodes)
 {
-    std::string node;
-    std::shared_ptr<std::atomic<long long>> counter_ptr;
-
+    std::lock_guard<std::mutex> lock(m_write_mu);
+    auto next = std::make_shared<HashRingSnapshot>();
+    for (const auto &node : nodes)
     {
-        // 关键优化：使用共享锁（读锁），允许100个线程同时进来二分查找
-        std::shared_lock<std::shared_timed_mutex> lock(m_rw_mtx);
-        if (m_keys.empty())
-            return "";
+        if (!node.empty())
+        {
+            fill_node(*next, node, m_config.replicas);
+        }
+    }
+    std::sort(next->keys.begin(), next->keys.end());
+    m_total_requests.store(0, std::memory_order_relaxed);
+    publish(std::move(next));
+    std::cout << "[ConsistentHash] 节点列表已全量更新，共计 " << nodes.size() << " 个节点。" << std::endl;
+}
 
-        uint32_t h = hash_func(key);
-        auto it = std::lower_bound(m_keys.begin(), m_keys.end(), h);
-        if (it == m_keys.end())
-            it = m_keys.begin();
-
-        node = m_ring[*it];
-        counter_ptr = m_node_counts[node]; // 拿出原子指针
+std::string ConsistentHash::GetTargetNode(const std::string &key, const std::string &exclude)
+{
+    auto snap = load();
+    if (!snap || snap->keys.empty())
+    {
+        return "";
     }
 
-     thread_local int sample_counter = 0;
-    if (++sample_counter >= 100) {
-        if (counter_ptr) {
-            // 放宽内存序
-            counter_ptr->fetch_add(100, std::memory_order_relaxed);
+    const uint32_t h = hash_func(key);
+    auto it = std::lower_bound(snap->keys.begin(), snap->keys.end(), h);
+    if (it == snap->keys.end())
+    {
+        it = snap->keys.begin();
+    }
+
+    auto pick = [&](auto iter) -> std::string {
+        auto found = snap->ring.find(*iter);
+        if (found == snap->ring.end())
+        {
+            return "";
+        }
+        return found->second;
+    };
+
+    std::string node = pick(it);
+    if (!exclude.empty() && node == exclude)
+    {
+        node.clear();
+        auto cursor = it;
+        for (size_t i = 0; i < snap->keys.size(); ++i)
+        {
+            ++cursor;
+            if (cursor == snap->keys.end())
+            {
+                cursor = snap->keys.begin();
+            }
+            const std::string candidate = pick(cursor);
+            if (!candidate.empty() && candidate != exclude)
+            {
+                node = candidate;
+                break;
+            }
+        }
+    }
+    if (node.empty())
+    {
+        return "";
+    }
+
+    thread_local int sample_counter = 0;
+    if (++sample_counter >= 100)
+    {
+        auto cit = snap->node_counts.find(node);
+        if (cit != snap->node_counts.end() && cit->second)
+        {
+            cit->second->fetch_add(100, std::memory_order_relaxed);
         }
         m_total_requests.fetch_add(100, std::memory_order_relaxed);
         sample_counter = 0;
     }
-
     return node;
-}
-
-
-void ConsistentHash::start_balancer()
-{
-    m_balancer_thread = std::thread([this]()
-                                    {
-        while (!m_stop_balancer) {
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            if (!m_stop_balancer) check_and_rebalance();
-        } });
-}
-
-void ConsistentHash::check_and_rebalance()
-{
-    if (m_total_requests.load() < 500)
-        return;
-
-    std::unique_lock<std::shared_timed_mutex> lock(m_rw_mtx);
-    if (m_node_replicas.empty())
-        return;
-
-    double avg = static_cast<double>(m_total_requests.load()) / m_node_replicas.size();
-    double max_skew = 0.0;
-
-    for (auto const &pair : m_node_counts)
-    {
-        double skew = std::abs(static_cast<double>(pair.second->load()) - avg) / (avg > 0 ? avg : 1.0);
-        if (skew > max_skew)
-            max_skew = skew;
-    }
-
-    if (max_skew > m_config.balance_threshold)
-    {
-        rebalance_logic();
-    }
-}
-
-void ConsistentHash::rebalance_logic()
-{
-
-    double avg = static_cast<double>(m_total_requests.load()) / m_node_replicas.size();
-    auto old_replicas_map = m_node_replicas;
-    auto counts_snapshot = m_node_counts;
-    m_node_counts.clear();
-    m_total_requests.store(0);
-    for (auto const &pair : counts_snapshot)
-    {
-        const std::string &node = pair.first;
-        long long count = pair.second->load();
-        int old_rep = old_replicas_map[node];
-
-        double ratio = (avg > 0) ? (static_cast<double>(count) / avg) : 1.0;
-        int new_rep;
-        if (ratio > 1.0)
-            new_rep = static_cast<int>(std::round(old_rep / ratio));
-        else
-            new_rep = static_cast<int>(std::round(old_rep * (2.0 - ratio)));
-
-        new_rep = std::max(m_config.min_replicas, std::min(m_config.max_replicas, new_rep));
-
-        if (new_rep != old_rep)
-        {
-            for (int i = 0; i < old_rep; ++i)
-            {
-                uint32_t h = hash_func(node + "#" + std::to_string(i));
-                m_ring.erase(h);
-                auto it_v = std::remove(m_keys.begin(), m_keys.end(), h);
-                m_keys.erase(it_v, m_keys.end());
-            }
-            add_node_internal(node, new_rep);
-        }
-    }
-
-    std::sort(m_keys.begin(), m_keys.end());
 }
 
 std::unordered_map<std::string, double> ConsistentHash::GetStats()
 {
-    std::shared_lock<std::shared_timed_mutex> lock(m_rw_mtx);
     std::unordered_map<std::string, double> stats;
-    long long total = m_total_requests.load();
-    if (total == 0)
-        return stats;
-    for (auto const &pair : m_node_counts)
+    auto snap = load();
+    const long long total = m_total_requests.load(std::memory_order_relaxed);
+    if (!snap || total == 0)
     {
-        stats[pair.first] = static_cast<double>(pair.second->load()) / total;
+        return stats;
+    }
+    for (const auto &pair : snap->node_counts)
+    {
+        stats[pair.first] = static_cast<double>(pair.second->load(std::memory_order_relaxed)) /
+                            static_cast<double>(total);
     }
     return stats;
-}
-void ConsistentHash::UpdateNodes(const std::vector<std::string> &nodes)
-{
-    // 1. 加锁，确保修改期间没有人能读取环
-    std::unique_lock<std::shared_timed_mutex> lock(m_rw_mtx);
-
-    // 2. 清空旧数据
-    m_keys.clear();
-    m_ring.clear();
-    m_node_replicas.clear();
-
-    // 重点：全量更新时，旧的统计数据已经没有意义了，必须清空
-    m_node_counts.clear();
-    m_total_requests.store(0);
-
-    // 3. 重新添加所有节点
-    for (size_t i = 0; i < nodes.size(); ++i)
-    {
-        if (!nodes[i].empty())
-        {
-            // 调用我们之前写好的内部添加逻辑
-            add_node_internal(nodes[i], m_config.replicas);
-        }
-    }
-
-    // 4. 重新排序，恢复哈希环
-    std::sort(m_keys.begin(), m_keys.end());
-
-    std::cout << "[ConsistentHash] 节点列表已全量更新，共计 " << nodes.size() << " 个节点。" << std::endl;
 }

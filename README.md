@@ -1,116 +1,151 @@
 # Krpc
 
-> **本项目目前只在[知识星球](https://programmercarl.com/other/kstar.html)答疑并维护**。
+C++ RPC 学习骨架：Muduo + Protobuf + ZooKeeper。  
+**这是给校招/作品集用的学习版，不是生产框架。** 没有 TLS、没有鉴权；ZooKeeper ACL 仍是开放的。
 
-本项目如果是有C++语法基础的录友，且做过[知识星球](https://programmercarl.com/other/kstar.html)的：[基于Raft共识算法的KV数据库](https://programmercarl.com/other/project_fenbushi.html)，[协程库](https://programmercarl.com/other/project_coroutine.html)，那大家上手这个项目的时间会非常快：
+当前版本相对上一轮补了协议校验、错误回包、连接内多路复用、熔断 Half-Open、ZK 会话恢复、过载保护和优雅退出。用 `bin/krpc_tests` 做回归，不要只拿空 Login 压测当正确性证明。
 
-学习时间：一天只需要抽3-4个小时，看3天左右基本能看完整个项目。
+## 能做什么
 
-如果你还是新手，很多理论知识还要从头学习，如果一天学6-8小时，大概需要两周基本能完成这个RPC项目。
+- 用 Protobuf 定义服务，客户端像调本地函数一样调远程方法（同步阻塞或异步 `done`）
+- 服务端 Muduo Reactor 收包，业务丢进有上限的线程池；请求/响应走线程本地对象池
+- ZooKeeper 注册发现；临时节点在会话恢复后会重注册，客户端会重装 watch
+- 一致性哈希选节点（读路径无锁快照）；写路径加锁，不再用后台线程改副本数
+- 客户端连接池：一条 TCP 上可以同时挂多个 RPC（`request_id`），空闲连接走 MPMC 队列
+- 同步超时在调用线程 `wait_for`；异步超时用每条 EventLoop 10ms 扫描
+- 按节点熔断（Closed / Open / Half-Open，探测只放行 1 个）
+- 包过大、长度溢出、header 损坏会关连接；方法不存在等业务错误会回错误帧
+- 服务端队列过载直接拒绝；`SIGINT`/`SIGTERM` 退出时关掉 ZK（临时节点消失）
 
-## 做完本项目你讲收获
+## 明确不做
 
-* 深入理解RPC框架原理与分布式系统设计
-* 夯实C++面向对象、STL、设计模式核心功底
-* 掌握Socket、TCP/UDP及高并发I/O模型（epoll）
-* 基于Muduo库实现Reactor网络模型，解耦业务与通信
-* 熟练使用Protobuf定义消息、实现高效序列化/反序列化
-* 设计自定义协议，解决TCP粘包/拆包问题
-* 集成Zookeeper作为注册中心，实现服务注册与发现
-* 运用Watcher机制动态感知服务状态，保障高可用
-* 从0到1打造高性能RPC框架，获得分布式系统开发经验
-* 提升解决复杂工程问题（协议设计、高并发、解耦）的能力
+- TLS / 鉴权 / 业务 Fallback
+- 滑动窗口失败率熔断、异步失败自动换节点
+- 完整的分布式追踪和直方图指标
+- IPv6 字面量地址（`ip:port` 按最后一个 `:` 切开，仅按 IPv4 来用）
 
-## 为什么要做c++版的rpc？
+## 架构
 
-1.高性能需求
+```
+客户端线程                    EventLoop 线程                 服务端
+   |                              |                           |
+ CallMethod                       |                      TcpServer IO
+   | 编一帧（带 request_id）        |                           |
+   | 无锁读哈希环快照选节点        |                           |
+   | 熔断检查 / 必要时换节点       |                           |
+   | 连接池借一条可发连接 -------->|  send / 大包 MSG_ZEROCOPY  |
+   | 同步 Wait / 异步登记超时      |  10ms tick：超时 / ERRQUEUE|
+   |                              |  按 request_id 对上回包     |
+   | <---- Notify / done.Run -----|  inflight 降下来再可出借    |
+   |                              |                      业务线程池（有上限）
+```
 
-c++以其高效的内存管理和底层控制能力，成为性能要求比较高的系统(如金融、游戏服务器、实时通信系统)的首选语言。
+## 协议
 
-在这些场景下，RPC框架需要尽可能减少通信开销，而C++天生的性能优势可以满足这一需要求。
+请求和响应都是同一套长度前缀帧：
 
+```
+total_len(4, 网络序) + header_len(4, 网络序) + header + payload
+total_len = 4 + header_len + payload 长度（不含最前面 4 字节）
+```
 
-2.系统级开发
+- 请求 header 是 `RpcHeader`（service / method / args_size / request_id），payload 是方法参数
+- 响应 header 是 `RpcMeta`（request_id / error_code / error_msg），成功时 payload 是 protobuf 响应；失败时 payload 为空
+- `total_len` 超过 `rpc_max_body_bytes`（默认 16MB）、`header_len` 越界、加法溢出，一律视为坏帧并**断开连接**
 
-很多底层基础设施(如数据库、中间件、分布式存储系统)都是用c++开发。
+一条连接上可以同时有多个未完成请求，靠 `request_id` 对应。默认每条连接最多 `max_inflight_per_conn`（32）个在途 RPC。
 
-这些系统需要一个与语言无缝结合的高效RPC框架，避免因语言间的切换导致性能损耗
+## 配置
 
+见 `bin/test.conf`：
 
-3.跨平台
+| 项 | 含义 | 默认 |
+|----|------|------|
+| `rpcserverip` / `rpcserverport` | 服务监听地址 | 必填 |
+| `zookeeperip` / `zookeeperport` | 注册中心 | 必填 |
+| `rpc_timeout_ms` | 客户端 RPC 超时 | 3000 |
+| `circuit_fail_threshold` | 连续失败多少次打开熔断 | 5 |
+| `circuit_reset_ms` | 熔断打开后多久允许一次探测 | 1000 |
+| `tcp_keepalive_idle_s` | TCP keepalive 空闲多久开始探测 | 30 |
+| `conn_idle_evict_ms` | 空闲超过该毫秒且无在途 RPC 则关掉；`0` 关闭 | 60000 |
+| `zerocopy_threshold` | 小于该字节数走普通 send | 16384 |
+| `enable_zerocopy` | `1` 打开内核零拷贝；`0` 关闭 | 1 |
+| `rpc_max_body_bytes` | 单帧上限，超出关连接 | 16777216 |
+| `max_inflight_per_conn` | 每条连接同时未完成 RPC 上限 | 32 |
+| `server_max_pending` | 服务端线程池排队上限，超出回过载错误 | 4096 |
 
-C++的可移植性在不同平台(如linux、Windows、嵌入式系统)上广泛使用。
+## 客户端
 
-一个C++RPC框架能够为这些多平台环境提供统一的通信接口，降低开发成本。
+```cpp
+KrpcApplication::Init(argc, argv);
+Kuser::UserServiceRpc_Stub stub(new KrpcChannel(), google::protobuf::Service::STUB_OWNS_CHANNEL);
+Kuser::LoginRequest req;
+Kuser::LoginResponse resp;
+Krpccontroller controller;
+stub.Login(&controller, &req, &resp, nullptr); // done 为空：阻塞到完成或超时
+```
 
-4.灵活性与可扩展性
+异步：传入 `Closure*`，`CallMethod` 立即返回。失败（借连接失败、熔断、超时）也一定会调 `done->Run()`。回调在 EventLoop 线程执行，不要做重计算。
 
-与某些语言的封闭生态不同，C++允许开发者灵活地调整底层实现。例如：可以定制序列化协议(如Protobuf、Thrift)、网络传输方式(如TCP、UDP、QUIC)等，以满足不同场景的需求。
+```cpp
+KrpcConnectPool::GetInstance().WarmUp(ip, port, KrpcApplication::CpuCores());
+```
 
-关于C++版RPC框架的使用场景：
+测完调用 `Shutdown()` / `Stop()`。
 
-* 微服务架构：在微服务架构中，服务通常分布在不同的网络和不同的服务器上，此时就需要一个高效的通信手段就是我们的rpc。
-* 实时通信：如在线游戏、视频直播、即时通信等场景，要求低延迟和高吞吐。C++RPC可以通过优化网络传输协议和序列化协议，提供实时性保障。
-* 分布式存储与计算：像hadoop、或者你做个raft的共识算法的话，也可也发现我们在不同节点之间使用rpc传递数据进行通信。
-* 嵌入式系统： 在嵌入式设备之间的通信中，资源有限且性能要求严格。C++的轻量级特性使其成为嵌入式RPC实现的理想选择。
-* 跨语言调用： C++ RPC框架通常支持多语言绑定（如Python、Java），可以用作跨语言调用的桥梁。例如，在后端服务使用C++开发的情况下，前端服务可以通过RPC框架调用其功能。
+## 服务端
 
-## 项目专栏
+`NotifyService` 后 `Run()`。未实现的方法（例如示例里的 `Register`）会通过非空 `controller` 回错误帧，而不是空指针崩溃。  
+`Ctrl+C` 或 `SIGTERM` 会退出事件循环、关掉 ZK 客户端（临时节点消失）。
 
-在项目专栏中， 该**项目简历如何写、性能如何测试、项目怎么优化、面试都会问哪些问题**，都安排好了。
+对象池仍要求：借出的 `request`/`response`/`Closure` 在**同一条业务线程**归还。如果业务自己把 `done` 丢到别的线程再 `Run()`，不要用这个池。
 
-不仅如此，还有 「技术栈需求」「运行环境」「RPC理论」「日志库」「代码解读」
+## 编译与运行
 
-### 简历写法
+依赖：C++20、Protobuf、Muduo、ZooKeeper C 客户端、glog。
 
-专栏里直接给出简历写法， 项目难点 和 个人收获是面试官最关心的部分。
+```bash
+cd Krpc/build
+cmake ..
+make -j
+./../bin/krpc_tests
+# 先启动 ZooKeeper，再启动 server，再启动 client
+./../bin/server -i ../bin/test.conf
+./../bin/client -i ../bin/test.conf
+```
 
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250103223303.png' width=500 alt=''></img></div>
+改 `example/user.proto` 后：
 
-在[知识星球](https://programmercarl.com/other/kstar.html)RPC项目专栏 会给出本项目的参考简历写法，为了不让 这些写法重复率太高，所以公众号上是打码的。
+```bash
+cd example
+protoc --cpp_out=. user.proto
+```
 
-### 性能测试
+改 `src/Krpcheader.proto` 后：
 
-带大家测试RPC的性能，更充分了解 系统的表现。
+```bash
+cd src
+protoc --cpp_out=. Krpcheader.proto
+mv Krpcheader.pb.h include/
+```
 
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250103224011.png' width=500 alt=''></img></div>
+## 模块
 
-### 项目优化
+| 文件 | 作用 |
+|------|------|
+| `RpcCodec` | 统一编解码、长度校验、防溢出 |
+| `LockFreeQueue` | 连接可发队列（MPMC） |
+| `KrpcConnectPool` | 连接池；限制同时建连数；按 inflight 再出借 |
+| `Krpcchannel` | 同步 `wait_for`，异步 TimeoutWheel；失败必调 done |
+| `ConsistentHash` / `ServiceDiscovery` | COW 读 + 写锁；ZK 重连后刷新 |
+| `CircuitBreaker` | 按节点；Half-Open 只放行 1 个探测 |
+| `Krpcprovider` | 拆包、过载拒绝、错误回包、优雅退出 |
+| `zookeeperutil` | 每客户端独立会话；过期后重建并重放 Create/Watch |
+| `ZeroCopySend` | 阈值以上 `MSG_ZEROCOPY`（可选路径，不是正确性前提） |
 
-项目文档列出的十几个优化点：
+## 已知边界
 
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250103224306.png' width=500 alt=''></img></div>
-
-涉及到 「通信模块」 「服务注册与发现模块」「负载均衡模块」「零拷贝优化技术」「日志与监控模块」「健康检测与熔断机制」「重试与超时处理」
-
-从各个方面，带大家去了解项目如何进一步优化，帮助大家找到可以拓展的方向，打造自己的项目竞争力，也避免了项目重复。
-
-### 代码讲解
-
-给出项目整体流程图：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250103224628.png' width=500 alt=''></img></div>
-
-其中项目的所有代码以及每个函数和类都有详细解释，根本不用担心自己看不懂：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250103224733.png' width=500 alt=''></img></div>
-
-同时我们对项目中需要用到的日志库做了详细的分析：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250103225024.png' width=500 alt=''></img></div>
-
-### RPC理论
-
-项目文档帮大家梳理清楚 RPC 的来龙去脉 ：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250103224858.png' width=500 alt=''></img></div>
-
-### 突击来用
-
-如果大家面试在即，实在没时间做项目了，可以直接按照专栏给出的简历写法，写到简历上，然后把项目专栏里的面试问题，都认真背一背就好了，基本覆盖 绝大多数 RPC项目问题。
-
-
-## 获取本项目专栏
-
-本文档仅为星球内部专享，大家可以加入[知识星球](https://programmercarl.com/other/kstar.html)里获取。
-
+- 零拷贝仍依赖建连时扫 `/proc/self/fd` 找套接字，虚机上内核可能 `copied=1`
+- 熔断仍是连续失败次数，不是时间窗失败率
+- 异步调用失败不会自动换节点（只有同步会试一次）
+- 没有 ASan 流水线；本地可用 `-fsanitize=address` 自行编一版

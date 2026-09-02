@@ -1,28 +1,165 @@
 #include "Krpcchannel.h"
-#include "Krpcheader.pb.h"
-#include "Krpcapplication.h"
-#include "Krpccontroller.h"
-#include <errno.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <arpa/inet.h>
-#include "KrpcLogger.h"
+#include "CircuitBreaker.h"
+#include "ConnContext.h"
 #include "KrpcConnectPool.h"
+#include "Krpcapplication.h"
+#include "Krpcheader.pb.h"
+#include "RpcCodec.h"
+#include "RpcError.h"
+#include "RpcPendingCall.h"
+#include "ServiceDiscovery.h"
+#include "TimeoutWheel.h"
+#include "ZeroCopySend.h"
 
-static std::atomic<uint64_t> g_req_id{0};
+#include <algorithm>
+#include <atomic>
+#include <cstdlib>
+#include <memory>
+#include <mutex>
+#include <muduo/net/EventLoop.h>
+#include <muduo/net/TcpConnection.h>
+#include <vector>
 
-ssize_t KrpcChannel::recv_exact(int fd, char *buf, size_t size) {
-    size_t total_read = 0;
-    while (total_read < size) {
-        ssize_t ret = recv(fd, buf + total_read, size - total_read, 0);
-        if (ret == 0) return 0; 
-        if (ret == -1) {
-            if (errno == EINTR) continue; 
-            return -1; 
-        }
-        total_read += ret;
+static std::atomic<uint64_t> g_req_id{1};
+
+static void FailDone(google::protobuf::RpcController *controller,
+                     google::protobuf::Closure *done,
+                     const std::string &err)
+{
+    if (controller)
+    {
+        controller->SetFailed(err);
     }
-    return total_read;
+    if (done)
+    {
+        done->Run();
+    }
+}
+
+static bool ParseNode(const std::string &ip_port, std::string *ip, uint16_t *port)
+{
+    const auto pos = ip_port.rfind(':');
+    if (pos == std::string::npos || pos == 0 || pos + 1 >= ip_port.size())
+    {
+        return false;
+    }
+    *ip = ip_port.substr(0, pos);
+    *port = static_cast<uint16_t>(std::atoi(ip_port.c_str() + pos + 1));
+    return !ip->empty() && *port != 0;
+}
+
+static bool BuildPayload(const google::protobuf::MethodDescriptor *method,
+                         const google::protobuf::Message *request,
+                         uint64_t request_id,
+                         std::string *out)
+{
+    thread_local std::string args_str;
+    thread_local std::string header_str;
+
+    args_str.clear();
+    if (!request->SerializeToString(&args_str))
+    {
+        return false;
+    }
+
+    Krpc::RpcHeader header;
+    header.set_service_name(method->service()->name());
+    header.set_method_name(method->name());
+    header.set_args_size(static_cast<google::protobuf::uint32>(args_str.size()));
+    header.set_request_id(request_id);
+    header_str.clear();
+    if (!header.SerializeToString(&header_str))
+    {
+        return false;
+    }
+    return EncodeRpcFrame(header_str, args_str, KrpcApplication::RpcMaxBodyBytes(), out);
+}
+
+bool KrpcChannel::IssueOnce(const std::string &node,
+                            const std::string &payload,
+                            uint64_t request_id,
+                            google::protobuf::RpcController *controller,
+                            google::protobuf::Message *response,
+                            google::protobuf::Closure *done,
+                            int timeout_ms)
+{
+    std::string ip;
+    uint16_t port = 0;
+    if (!ParseNode(node, &ip, &port))
+    {
+        FailDone(controller, done, "invalid node address");
+        return false;
+    }
+
+    const int borrow_timeout = std::min(timeout_ms, 2000);
+    auto conn = KrpcConnectPool::GetInstance().BorrowConnection(ip, port, borrow_timeout);
+    if (!conn)
+    {
+        FailDone(controller, done, "Borrow connection from pool failed!");
+        CircuitBreaker::Instance().RecordFailure(node);
+        return false;
+    }
+
+    auto pending = std::make_shared<RpcPendingCall>();
+    pending->controller = controller;
+    pending->response = response;
+    pending->done = done;
+    pending->node = node;
+    pending->conn = conn;
+    pending->loop = conn->getLoop();
+    pending->request_id = request_id;
+    pending->deadline_ms = RpcNowMs() + timeout_ms;
+
+    pending->loop->runInLoop([conn, pending, payload]() {
+        if (pending->completed.load(std::memory_order_acquire))
+        {
+            KrpcConnectPool::GetInstance().MaybeMakeAvailable(conn);
+            return;
+        }
+        if (!conn->connected())
+        {
+            FinishRpcCall(pending, false, "connection closed before send", true);
+            return;
+        }
+        auto ctx = EnsureConnContext(conn);
+        ctx->pending[pending->request_id] = pending;
+        ctx->inflight.fetch_add(1, std::memory_order_relaxed);
+        if (pending->done != nullptr)
+        {
+            TimeoutWheel::Register(pending);
+        }
+        bool sent = false;
+        if (ZeroCopySend::ShouldUse(payload.size(), conn))
+        {
+            auto buf = std::make_shared<std::vector<char>>(payload.begin(), payload.end());
+            sent = ZeroCopySend::TrySend(conn, buf);
+        }
+        if (!sent)
+        {
+            conn->send(payload.data(), static_cast<int>(payload.size()));
+        }
+        KrpcConnectPool::GetInstance().MaybeMakeAvailable(conn);
+    });
+
+    if (done == nullptr)
+    {
+        if (!pending->Wait(timeout_ms))
+        {
+            if (pending->TryComplete(false, "rpc timeout", false))
+            {
+                controller->SetFailed("rpc timeout");
+                pending->loop->queueInLoop([pending]() { ApplyRpcFinish(pending); });
+                return false;
+            }
+        }
+        if (!pending->ok)
+        {
+            controller->SetFailed(pending->err);
+            return false;
+        }
+        return true;
+    }
+    return true;
 }
 
 void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
@@ -31,85 +168,60 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
                              ::google::protobuf::Message *response,
                              ::google::protobuf::Closure *done)
 {
-    std::string service_name = method->service()->name();    
-    std::string method_name = method->name(); 
-
     static std::once_flag init_flag;
     std::call_once(init_flag, []() { ServiceDiscovery::GetInstance().Init(); });
 
-   
-    uint64_t req_id = g_req_id.fetch_add(1, std::memory_order_relaxed);
-    std::string route_key = std::to_string(req_id);
+    const std::string service_name = method->service()->name();
+    const uint64_t req_id = g_req_id.fetch_add(1, std::memory_order_relaxed);
+    const int timeout_ms = KrpcApplication::RpcTimeoutMs();
 
-    std::string ip_port = ServiceDiscovery::GetInstance().GetTargetNode(service_name, route_key);
-    if (ip_port.empty()) {
-        controller->SetFailed("Hash ring returned empty node!");
-        return;
-    }
-    
-    size_t pos = ip_port.find(":");
-    std::string target_ip = ip_port.substr(0, pos);
-    uint16_t target_port = atoi(ip_port.substr(pos + 1).c_str());
-
-  
-    int clientfd = KrpcConnectPool::GetInstance().BorrowConnection(target_ip, target_port);
-    if (clientfd == -1) {
-        controller->SetFailed("Borrow connection from pool failed!");
+    std::string payload;
+    if (!BuildPayload(method, request, req_id, &payload))
+    {
+        FailDone(controller, done, "Serialize request fail");
         return;
     }
 
-    bool is_bad = false; 
-    std::string args_str;
-    
-    if (!request->SerializeToString(&args_str)) {
-        controller->SetFailed("Serialize request fail");
-        is_bad = true; 
-    } else {
-        Krpc::RpcHeader krpcheader;
-        krpcheader.set_service_name(service_name);
-        krpcheader.set_method_name(method_name);
-        krpcheader.set_args_size(args_str.size());
+    auto pick_node = [&](const std::string &exclude) {
+        return ServiceDiscovery::GetInstance().GetTargetNode(service_name, std::to_string(req_id), exclude);
+    };
 
-        std::string rpc_header_str;
-        krpcheader.SerializeToString(&rpc_header_str);
+    std::string node = pick_node("");
+    if (node.empty())
+    {
+        FailDone(controller, done, "Hash ring returned empty node!");
+        return;
+    }
 
-        uint32_t header_size = rpc_header_str.size();
-        uint32_t total_len = 4 + header_size + args_str.size();
-        uint32_t net_total_len = htonl(total_len);
-        uint32_t net_header_len = htonl(header_size);
-
-        std::string send_rpc_str;
-        send_rpc_str.reserve(4 + 4 + header_size + args_str.size());
-        send_rpc_str.append((char *)&net_total_len, 4);
-        send_rpc_str.append((char *)&net_header_len, 4);
-        send_rpc_str.append(rpc_header_str);
-        send_rpc_str.append(args_str);
-
-       
-        if (send(clientfd, send_rpc_str.c_str(), send_rpc_str.size(), MSG_NOSIGNAL) == -1) {
-            controller->SetFailed("Send rpc request error!");
-            is_bad = true;
-        } else {
-            uint32_t response_len = 0;
-            if (recv_exact(clientfd, (char *)&response_len, 4) != 4) {
-                controller->SetFailed("Recv response header error!");
-                is_bad = true;
-            } else {
-                response_len = ntohl(response_len);
-                std::vector<char> recv_buf(response_len);
-                if (recv_exact(clientfd, recv_buf.data(), response_len) != (ssize_t)response_len) {
-                    controller->SetFailed("Recv response body error!");
-                    is_bad = true;
-                } else {
-                    if (!response->ParseFromArray(recv_buf.data(), response_len)) {
-                        controller->SetFailed("Parse response error!");
-                        is_bad = true;
-                    }
-                }
-            }
+    if (!CircuitBreaker::Instance().AllowRequest(node))
+    {
+        const std::string alt = pick_node(node);
+        if (alt.empty() || !CircuitBreaker::Instance().AllowRequest(alt))
+        {
+            FailDone(controller, done, "circuit open");
+            return;
         }
+        node = alt;
     }
 
- 
-    KrpcConnectPool::GetInstance().ReturnConnection(target_ip, target_port, clientfd, is_bad);
+    const bool ok = IssueOnce(node, payload, req_id, controller, response, done, timeout_ms);
+    if (done != nullptr || ok)
+    {
+        return;
+    }
+
+    const std::string alt = pick_node(node);
+    if (alt.empty() || !CircuitBreaker::Instance().AllowRequest(alt))
+    {
+        return;
+    }
+    controller->Reset();
+    const uint64_t retry_id = g_req_id.fetch_add(1, std::memory_order_relaxed);
+    std::string retry_payload;
+    if (!BuildPayload(method, request, retry_id, &retry_payload))
+    {
+        controller->SetFailed("Serialize request fail");
+        return;
+    }
+    IssueOnce(alt, retry_payload, retry_id, controller, response, nullptr, timeout_ms);
 }

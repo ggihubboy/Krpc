@@ -1,5 +1,7 @@
+#include <chrono>
 #include <iostream>
 #include <string>
+#include <thread>
 #include "../user.pb.h"
 #include "Krpcapplication.h"
 #include "Krpcprovider.h"
@@ -14,9 +16,9 @@ public:
     // 本地登录方法，用于处理实际的业务逻辑
     bool Login(std::string name, std::string pwd)
     {
-        // 模拟查数据库耗时 5 毫秒
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        return true; // 模拟登录成功
+        (void)name;
+        (void)pwd;
+        return true;
     }
 
     /*
@@ -43,6 +45,16 @@ public:
         response->set_success(login_result); // 设置登录结果
 
         // 执行回调操作，框架会自动将响应序列化并发送给调用者
+        done->Run();
+    }
+
+    void EchoBlob(::google::protobuf::RpcController *controller,
+                  const ::Kuser::EchoBlobRequest *request,
+                  ::Kuser::EchoBlobResponse *response,
+                  ::google::protobuf::Closure *done)
+    {
+        (void)controller;
+        response->set_body(request->body());
         done->Run();
     }
 };

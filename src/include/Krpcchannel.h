@@ -2,17 +2,14 @@
 #define _Krpcchannel_h_
 
 #include <google/protobuf/service.h>
-#include <unistd.h>
-#include "ServiceDiscovery.h"
+
+#include <cstdint>
 
 class KrpcChannel : public google::protobuf::RpcChannel
 {
 public:
-
-    KrpcChannel(bool connectNow = false) {} 
-    
-    // 【关键修改点】：析构函数也直接实现
-    virtual ~KrpcChannel() override {}
+    explicit KrpcChannel(bool connectNow = false) { (void)connectNow; }
+    ~KrpcChannel() override = default;
 
     void CallMethod(const ::google::protobuf::MethodDescriptor *method,
                     ::google::protobuf::RpcController *controller,
@@ -21,8 +18,13 @@ public:
                     ::google::protobuf::Closure *done) override;
 
 private:
-    // 内部辅助函数声明
-    ssize_t recv_exact(int fd, char *buf, size_t size);
+    bool IssueOnce(const std::string &node,
+                   const std::string &payload,
+                   uint64_t request_id,
+                   google::protobuf::RpcController *controller,
+                   google::protobuf::Message *response,
+                   google::protobuf::Closure *done,
+                   int timeout_ms);
 };
 
 #endif

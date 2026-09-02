@@ -1,6 +1,8 @@
 #include "ServiceDiscovery.h"
 #include "KrpcLogger.h"
 
+#include <atomic>
+
 ServiceDiscovery &ServiceDiscovery::GetInstance()
 {
     static ServiceDiscovery instance;
@@ -10,54 +12,109 @@ ServiceDiscovery &ServiceDiscovery::GetInstance()
 void ServiceDiscovery::Init()
 {
     m_zkClient.Start();
+    auto empty = std::make_shared<DiscoverySnapshot>();
+    std::atomic_store_explicit(&m_snapshot, std::shared_ptr<const DiscoverySnapshot>(std::move(empty)),
+                               std::memory_order_relaxed);
+    m_zkClient.SetReconnectedCallback([this]() {
+        auto snap = std::atomic_load_explicit(&m_snapshot, std::memory_order_acquire);
+        if (!snap)
+        {
+            return;
+        }
+        for (const auto &pair : snap->services)
+        {
+            const std::string path = "/" + pair.first;
+            std::vector<std::string> nodes = m_zkClient.GetChildren(path.c_str(), WatcherCallback, this);
+            if (pair.second)
+            {
+                pair.second->UpdateNodes(nodes);
+            }
+        }
+    });
 }
 
-std::string ServiceDiscovery::GetTargetNode(const std::string &service_name, const std::string &key)
+std::shared_ptr<ConsistentHash> ServiceDiscovery::EnsureServiceLocked(
+    const std::string &service_name, const std::vector<std::string> &nodes)
 {
+    auto old_snap = std::atomic_load_explicit(&m_snapshot, std::memory_order_acquire);
+    if (old_snap)
     {
-      
-        std::shared_lock<std::shared_timed_mutex> read_lock(m_rw_mtx); 
-        if (m_chash_map.find(service_name) != m_chash_map.end())
+        auto it = old_snap->services.find(service_name);
+        if (it != old_snap->services.end())
         {
-            return m_chash_map[service_name]->GetTargetNode(key);
+            return it->second;
         }
     }
 
-    // 如果还没有该服务，需要去 ZK 拉取（此时不能加锁，因为网络请求很慢）
-    std::string path = "/" + service_name;
+    auto hash_ring = std::make_shared<ConsistentHash>();
+    hash_ring->UpdateNodes(nodes);
+
+    auto next = std::make_shared<DiscoverySnapshot>();
+    if (old_snap)
+    {
+        next->services = old_snap->services;
+    }
+    next->services[service_name] = hash_ring;
+    std::atomic_store_explicit(&m_snapshot, std::shared_ptr<const DiscoverySnapshot>(next),
+                               std::memory_order_release);
+    return hash_ring;
+}
+
+std::string ServiceDiscovery::GetTargetNode(const std::string &service_name,
+                                            const std::string &key,
+                                            const std::string &exclude)
+{
+    auto snap = std::atomic_load_explicit(&m_snapshot, std::memory_order_acquire);
+    if (snap)
+    {
+        auto it = snap->services.find(service_name);
+        if (it != snap->services.end() && it->second)
+        {
+            return it->second->GetTargetNode(key, exclude);
+        }
+    }
+
+    const std::string path = "/" + service_name;
     std::vector<std::string> new_nodes = m_zkClient.GetChildren(path.c_str(), WatcherCallback, this);
 
+    std::shared_ptr<ConsistentHash> hash_ring;
     {
-        // 拉取到数据后，加写锁（独占锁）更新内部数据结构
-        std::unique_lock<std::shared_timed_mutex> write_lock(m_rw_mtx);
-        // 双重检查，防止其他线程已经初始化
-        if (m_chash_map.find(service_name) == m_chash_map.end())
-        {
-            m_chash_map[service_name] = std::unique_ptr<ConsistentHash>(new ConsistentHash());
-            m_chash_map[service_name]->UpdateNodes(new_nodes);
-            m_nodes_cache[service_name] = new_nodes;
-        }
-        return m_chash_map[service_name]->GetTargetNode(key);
+        std::lock_guard<std::mutex> lock(m_init_mtx);
+        hash_ring = EnsureServiceLocked(service_name, new_nodes);
     }
+    return hash_ring->GetTargetNode(key, exclude);
 }
 
 void ServiceDiscovery::WatcherCallback(zhandle_t *zh, int type, int state, const char *path, void *watcherCtx)
 {
-    if (type == ZOO_CHILD_EVENT)
-    { 
-        ServiceDiscovery *sd = static_cast<ServiceDiscovery *>(watcherCtx);
-        std::string path_str = path;
-        std::string service_name = path_str.substr(1); 
-
-        // 千万不要在这里加锁！先发起阻塞网络请求获取最新节点
-        std::vector<std::string> new_nodes = sd->m_zkClient.GetChildren(path_str.c_str(), WatcherCallback, sd);
-        
-        // 拿到数据后，再加写锁更新内存结构
-        std::unique_lock<std::shared_timed_mutex> lock(sd->m_rw_mtx);
-        if (sd->m_chash_map.find(service_name) != sd->m_chash_map.end()) {
-            sd->m_chash_map[service_name]->UpdateNodes(new_nodes);
-        }
-        sd->m_nodes_cache[service_name] = new_nodes;
+    (void)zh;
+    (void)state;
+    if (type != ZOO_CHILD_EVENT)
+    {
+        return;
     }
-}
 
+    auto *sd = static_cast<ServiceDiscovery *>(watcherCtx);
+    const std::string path_str = path ? path : "";
+    if (path_str.size() < 2)
+    {
+        return;
+    }
+    const std::string service_name = path_str.substr(1);
+
+    std::vector<std::string> new_nodes = sd->m_zkClient.GetChildren(path_str.c_str(), WatcherCallback, sd);
+
+    auto snap = std::atomic_load_explicit(&sd->m_snapshot, std::memory_order_acquire);
+    if (snap)
+    {
+        auto it = snap->services.find(service_name);
+        if (it != snap->services.end() && it->second)
+        {
+            it->second->UpdateNodes(new_nodes);
+            return;
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(sd->m_init_mtx);
+    sd->EnsureServiceLocked(service_name, new_nodes);
+}

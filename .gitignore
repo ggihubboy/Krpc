@@ -1,0 +1,33 @@
+# CMake out-of-source builds and generated metadata
+/build/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/CTestTestfile.cmake
+**/Makefile
+
+# Compiler and linker outputs
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+
+# Generated runnable binaries (keep bin/test.conf tracked)
+/bin/client
+/bin/server
+/bin/krpc_tests
+
+# Runtime and glog output
+*.log
+*.log.*
+/logs/
+
+# Editor and operating-system temporary files
+*~
+*.swp
+*.swo
+*.tmp
+.DS_Store
+.idea/
+.vscode/

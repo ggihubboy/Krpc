@@ -1,61 +1,144 @@
 #include "Krpcapplication.h"
-#include<cstdlib>
-#include<unistd.h>
+#include "CircuitBreaker.h"
 
-Krpcconfig KrpcApplication::m_config;  // 全局配置对象
-std::mutex KrpcApplication::m_mutex;  // 用于线程安全的互斥锁
-KrpcApplication* KrpcApplication::m_application = nullptr;  // 单例对象指针，初始为空
+#include <algorithm>
+#include <cstdlib>
+#include <iostream>
+#include <muduo/base/Logging.h>
+#include <thread>
+#include <unistd.h>
 
-// 初始化函数，用于解析命令行参数并加载配置文件
-void KrpcApplication::Init(int argc, char **argv) {
-    if (argc < 2) {  // 如果命令行参数少于2个，说明没有指定配置文件
+Krpcconfig KrpcApplication::m_config;
+int KrpcApplication::m_rpc_timeout_ms = 3000;
+int KrpcApplication::m_tcp_keepalive_idle_s = 30;
+int KrpcApplication::m_conn_idle_evict_ms = 60000;
+int KrpcApplication::m_zerocopy_threshold = 16384;
+int KrpcApplication::m_enable_zerocopy = 1;
+uint32_t KrpcApplication::m_rpc_max_body_bytes = 16u * 1024u * 1024u;
+int KrpcApplication::m_max_inflight_per_conn = 32;
+int KrpcApplication::m_server_max_pending = 4096;
+
+static int ParseIntOr(const std::string &text, int fallback)
+{
+    if (text.empty())
+    {
+        return fallback;
+    }
+    try
+    {
+        return std::stoi(text);
+    }
+    catch (...)
+    {
+        return fallback;
+    }
+}
+
+void KrpcApplication::Init(int argc, char **argv)
+{
+    if (argc < 2)
+    {
         std::cout << "格式: command -i <配置文件路径>" << std::endl;
-        exit(EXIT_FAILURE);  // 退出程序
+        exit(EXIT_FAILURE);
     }
 
-    int o;
+    int o = 0;
     std::string config_file;
-    // 使用getopt解析命令行参数，-i表示指定配置文件
-    while (-1 != (o = getopt(argc, argv, "i:"))) {
-        switch (o) {
-            case 'i':  // 如果参数是-i，后面的值就是配置文件的路径
-                config_file = optarg;  // 将配置文件路径保存到config_file
-                break;
-            case '?':  // 如果出现未知参数（不是-i），提示正确格式并退出
-                std::cout << "格式: command -i <配置文件路径>" << std::endl;
-                exit(EXIT_FAILURE);
-                break;
-            case ':':  // 如果-i后面没有跟参数，提示正确格式并退出
-                std::cout << "格式: command -i <配置文件路径>" << std::endl;
-                exit(EXIT_FAILURE);
-                break;
-            default:
-                break;
+    while (-1 != (o = getopt(argc, argv, "i:")))
+    {
+        switch (o)
+        {
+        case 'i':
+            config_file = optarg;
+            break;
+        case '?':
+        case ':':
+            std::cout << "格式: command -i <配置文件路径>" << std::endl;
+            exit(EXIT_FAILURE);
+            break;
+        default:
+            break;
         }
     }
 
-    // 加载配置文件
     m_config.LoadConfigFile(config_file.c_str());
+    m_rpc_timeout_ms = std::max(1, ParseIntOr(m_config.Load("rpc_timeout_ms"), 3000));
+    m_tcp_keepalive_idle_s = std::max(1, ParseIntOr(m_config.Load("tcp_keepalive_idle_s"), 30));
+    m_conn_idle_evict_ms = std::max(0, ParseIntOr(m_config.Load("conn_idle_evict_ms"), 60000));
+    m_zerocopy_threshold = std::max(0, ParseIntOr(m_config.Load("zerocopy_threshold"), 16384));
+    m_enable_zerocopy = ParseIntOr(m_config.Load("enable_zerocopy"), 1);
+    m_rpc_max_body_bytes = static_cast<uint32_t>(
+        std::max(1024, ParseIntOr(m_config.Load("rpc_max_body_bytes"), 16 * 1024 * 1024)));
+    m_max_inflight_per_conn = std::max(1, ParseIntOr(m_config.Load("max_inflight_per_conn"), 32));
+    m_server_max_pending = std::max(1, ParseIntOr(m_config.Load("server_max_pending"), 4096));
+    CircuitBreaker::Instance().Configure(
+        ParseIntOr(m_config.Load("circuit_fail_threshold"), 5),
+        ParseIntOr(m_config.Load("circuit_reset_ms"), 1000));
+    muduo::Logger::setLogLevel(muduo::Logger::WARN);
 }
 
-// 获取单例对象的引用，保证全局只有一个实例
-KrpcApplication &KrpcApplication::GetInstance() {
-    std::lock_guard<std::mutex> lock(m_mutex);  // 加锁，保证线程安全
-    if (m_application == nullptr) {  // 如果单例对象还未创建
-        m_application = new KrpcApplication();  // 创建单例对象
-        atexit(deleteInstance);  // 注册atexit函数，程序退出时自动销毁单例对象
-    }
-    return *m_application;  // 返回单例对象的引用
+KrpcApplication &KrpcApplication::GetInstance()
+{
+    static KrpcApplication application;
+    return application;
 }
 
-// 程序退出时自动调用的函数，用于销毁单例对象
-void KrpcApplication::deleteInstance() {
-    if (m_application) {  // 如果单例对象存在
-        delete m_application;  // 销毁单例对象
-    }
+void KrpcApplication::deleteInstance()
+{
 }
 
-// 获取全局配置对象的引用
-Krpcconfig& KrpcApplication::GetConfig() {
+Krpcconfig &KrpcApplication::GetConfig()
+{
     return m_config;
+}
+
+int KrpcApplication::RpcTimeoutMs()
+{
+    return m_rpc_timeout_ms;
+}
+
+int KrpcApplication::TcpKeepaliveIdleS()
+{
+    return m_tcp_keepalive_idle_s;
+}
+
+int KrpcApplication::ConnIdleEvictMs()
+{
+    return m_conn_idle_evict_ms;
+}
+
+int KrpcApplication::ZeroCopyThreshold()
+{
+    return m_zerocopy_threshold;
+}
+
+bool KrpcApplication::EnableZeroCopy()
+{
+    return m_enable_zerocopy != 0;
+}
+
+uint32_t KrpcApplication::RpcMaxBodyBytes()
+{
+    return m_rpc_max_body_bytes;
+}
+
+int KrpcApplication::MaxInflightPerConn()
+{
+    return m_max_inflight_per_conn;
+}
+
+int KrpcApplication::ServerMaxPending()
+{
+    return m_server_max_pending;
+}
+
+int KrpcApplication::CpuCores()
+{
+    const unsigned cores = std::thread::hardware_concurrency();
+    return cores == 0 ? 1 : static_cast<int>(cores);
+}
+
+int KrpcApplication::ClientIoThreads()
+{
+    return std::min(8, std::max(4, CpuCores()));
 }

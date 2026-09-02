@@ -3,8 +3,13 @@ cmake_minimum_required(VERSION 3.0)
 project(Krpc)
 
 #设置全局的C++标准
-set(CMAKE_CXX_STANDARD 14)#在这里我设置了11，代表使用c++11标准
-set(CMAKE_CXX_STANDARD_REQUIRED True)#CMAKE_CXX_STANDARD_REQUIRED表示强制使用指定的标准
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
+# gcc 9 只认 c++2a，gcc 10+ 才有 -std=c++20
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 10)
+    set(CMAKE_CXX20_STANDARD_COMPILE_OPTION "-std=c++2a")
+    set(CMAKE_CXX20_EXTENSION_COMPILE_OPTION "-std=gnu++2a")
+endif()
 
 #设置头文件目录，供所有子项目使用
 #include_directories(${CMAKE_SOURCE_DIR}/src/include) #其中CMAKE_SOURCE_DIR表示当前目录
@@ -23,5 +28,7 @@ set(LIBS
     glog
 )
 #添加子目录
+enable_testing()
 add_subdirectory(src)
 add_subdirectory(example)
+add_subdirectory(tests)

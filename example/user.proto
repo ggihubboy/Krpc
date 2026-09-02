@@ -25,7 +25,14 @@ message RegisterResponse{
     ResultCode result=1;
     bool success=2;
 }
+message EchoBlobRequest{
+    bytes body=1;
+}
+message EchoBlobResponse{
+    bytes body=1;
+}
 service UserServiceRpc{
     rpc Login(LoginRequest) returns(LoginResponse);
     rpc Register(RegisterRequest) returns(RegisterResponse);
+    rpc EchoBlob(EchoBlobRequest) returns(EchoBlobResponse);
 }

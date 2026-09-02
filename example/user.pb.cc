@@ -36,7 +36,43 @@ class RegisterResponseDefaultTypeInternal {
  public:
   ::PROTOBUF_NAMESPACE_ID::internal::ExplicitlyConstructed<RegisterResponse> _instance;
 } _RegisterResponse_default_instance_;
+class EchoBlobRequestDefaultTypeInternal {
+ public:
+  ::PROTOBUF_NAMESPACE_ID::internal::ExplicitlyConstructed<EchoBlobRequest> _instance;
+} _EchoBlobRequest_default_instance_;
+class EchoBlobResponseDefaultTypeInternal {
+ public:
+  ::PROTOBUF_NAMESPACE_ID::internal::ExplicitlyConstructed<EchoBlobResponse> _instance;
+} _EchoBlobResponse_default_instance_;
 }  // namespace Kuser
+static void InitDefaultsscc_info_EchoBlobRequest_user_2eproto() {
+  GOOGLE_PROTOBUF_VERIFY_VERSION;
+
+  {
+    void* ptr = &::Kuser::_EchoBlobRequest_default_instance_;
+    new (ptr) ::Kuser::EchoBlobRequest();
+    ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
+  }
+  ::Kuser::EchoBlobRequest::InitAsDefaultInstance();
+}
+
+::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_EchoBlobRequest_user_2eproto =
+    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 0, 0, InitDefaultsscc_info_EchoBlobRequest_user_2eproto}, {}};
+
+static void InitDefaultsscc_info_EchoBlobResponse_user_2eproto() {
+  GOOGLE_PROTOBUF_VERIFY_VERSION;
+
+  {
+    void* ptr = &::Kuser::_EchoBlobResponse_default_instance_;
+    new (ptr) ::Kuser::EchoBlobResponse();
+    ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
+  }
+  ::Kuser::EchoBlobResponse::InitAsDefaultInstance();
+}
+
+::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_EchoBlobResponse_user_2eproto =
+    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 0, 0, InitDefaultsscc_info_EchoBlobResponse_user_2eproto}, {}};
+
 static void InitDefaultsscc_info_LoginRequest_user_2eproto() {
   GOOGLE_PROTOBUF_VERIFY_VERSION;
 
@@ -109,7 +145,7 @@ static void InitDefaultsscc_info_ResultCode_user_2eproto() {
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_ResultCode_user_2eproto =
     {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 0, 0, InitDefaultsscc_info_ResultCode_user_2eproto}, {}};
 
-static ::PROTOBUF_NAMESPACE_ID::Metadata file_level_metadata_user_2eproto[5];
+static ::PROTOBUF_NAMESPACE_ID::Metadata file_level_metadata_user_2eproto[7];
 static constexpr ::PROTOBUF_NAMESPACE_ID::EnumDescriptor const** file_level_enum_descriptors_user_2eproto = nullptr;
 static const ::PROTOBUF_NAMESPACE_ID::ServiceDescriptor* file_level_service_descriptors_user_2eproto[1];
 
@@ -150,6 +186,18 @@ const ::PROTOBUF_NAMESPACE_ID::uint32 TableStruct_user_2eproto::offsets[] PROTOB
   ~0u,  // no _weak_field_map_
   PROTOBUF_FIELD_OFFSET(::Kuser::RegisterResponse, result_),
   PROTOBUF_FIELD_OFFSET(::Kuser::RegisterResponse, success_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::Kuser::EchoBlobRequest, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  PROTOBUF_FIELD_OFFSET(::Kuser::EchoBlobRequest, body_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::Kuser::EchoBlobResponse, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  PROTOBUF_FIELD_OFFSET(::Kuser::EchoBlobResponse, body_),
 };
 static const ::PROTOBUF_NAMESPACE_ID::internal::MigrationSchema schemas[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) = {
   { 0, -1, sizeof(::Kuser::ResultCode)},
@@ -157,6 +205,8 @@ static const ::PROTOBUF_NAMESPACE_ID::internal::MigrationSchema schemas[] PROTOB
   { 14, -1, sizeof(::Kuser::LoginResponse)},
   { 21, -1, sizeof(::Kuser::RegisterRequest)},
   { 29, -1, sizeof(::Kuser::RegisterResponse)},
+  { 36, -1, sizeof(::Kuser::EchoBlobRequest)},
+  { 42, -1, sizeof(::Kuser::EchoBlobResponse)},
 };
 
 static ::PROTOBUF_NAMESPACE_ID::Message const * const file_default_instances[] = {
@@ -165,6 +215,8 @@ static ::PROTOBUF_NAMESPACE_ID::Message const * const file_default_instances[] =
   reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::Kuser::_LoginResponse_default_instance_),
   reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::Kuser::_RegisterRequest_default_instance_),
   reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::Kuser::_RegisterResponse_default_instance_),
+  reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::Kuser::_EchoBlobRequest_default_instance_),
+  reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::Kuser::_EchoBlobResponse_default_instance_),
 };
 
 const char descriptor_table_protodef_user_2eproto[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) =
@@ -175,15 +227,20 @@ const char descriptor_table_protodef_user_2eproto[] PROTOBUF_SECTION_VARIABLE(pr
   "e\022\017\n\007success\030\002 \001(\010\"8\n\017RegisterRequest\022\n\n"
   "\002id\030\001 \001(\r\022\014\n\004name\030\002 \001(\014\022\013\n\003pwd\030\003 \001(\014\"F\n\020"
   "RegisterResponse\022!\n\006result\030\001 \001(\0132\021.Kuser"
-  ".ResultCode\022\017\n\007success\030\002 \001(\0102\201\001\n\016UserSer"
-  "viceRpc\0222\n\005Login\022\023.Kuser.LoginRequest\032\024."
-  "Kuser.LoginResponse\022;\n\010Register\022\026.Kuser."
-  "RegisterRequest\032\027.Kuser.RegisterResponse"
-  "B\003\200\001\001b\006proto3"
+  ".ResultCode\022\017\n\007success\030\002 \001(\010\"\037\n\017EchoBlob"
+  "Request\022\014\n\004body\030\001 \001(\014\" \n\020EchoBlobRespons"
+  "e\022\014\n\004body\030\001 \001(\0142\276\001\n\016UserServiceRpc\0222\n\005Lo"
+  "gin\022\023.Kuser.LoginRequest\032\024.Kuser.LoginRe"
+  "sponse\022;\n\010Register\022\026.Kuser.RegisterReque"
+  "st\032\027.Kuser.RegisterResponse\022;\n\010EchoBlob\022"
+  "\026.Kuser.EchoBlobRequest\032\027.Kuser.EchoBlob"
+  "ResponseB\003\200\001\001b\006proto3"
   ;
 static const ::PROTOBUF_NAMESPACE_ID::internal::DescriptorTable*const descriptor_table_user_2eproto_deps[1] = {
 };
-static ::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase*const descriptor_table_user_2eproto_sccs[5] = {
+static ::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase*const descriptor_table_user_2eproto_sccs[7] = {
+  &scc_info_EchoBlobRequest_user_2eproto.base,
+  &scc_info_EchoBlobResponse_user_2eproto.base,
   &scc_info_LoginRequest_user_2eproto.base,
   &scc_info_LoginResponse_user_2eproto.base,
   &scc_info_RegisterRequest_user_2eproto.base,
@@ -192,10 +249,10 @@ static ::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase*const descriptor_table_use
 };
 static ::PROTOBUF_NAMESPACE_ID::internal::once_flag descriptor_table_user_2eproto_once;
 const ::PROTOBUF_NAMESPACE_ID::internal::DescriptorTable descriptor_table_user_2eproto = {
-  false, false, descriptor_table_protodef_user_2eproto, "user.proto", 453,
-  &descriptor_table_user_2eproto_once, descriptor_table_user_2eproto_sccs, descriptor_table_user_2eproto_deps, 5, 0,
+  false, false, descriptor_table_protodef_user_2eproto, "user.proto", 581,
+  &descriptor_table_user_2eproto_once, descriptor_table_user_2eproto_sccs, descriptor_table_user_2eproto_deps, 7, 0,
   schemas, file_default_instances, TableStruct_user_2eproto::offsets,
-  file_level_metadata_user_2eproto, 5, file_level_enum_descriptors_user_2eproto, file_level_service_descriptors_user_2eproto,
+  file_level_metadata_user_2eproto, 7, file_level_enum_descriptors_user_2eproto, file_level_service_descriptors_user_2eproto,
 };
 
 // Force running AddDescriptors() at dynamic initialization time.
@@ -1426,6 +1483,414 @@ void RegisterResponse::InternalSwap(RegisterResponse* other) {
 
 // ===================================================================
 
+void EchoBlobRequest::InitAsDefaultInstance() {
+}
+class EchoBlobRequest::_Internal {
+ public:
+};
+
+EchoBlobRequest::EchoBlobRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena) {
+  SharedCtor();
+  RegisterArenaDtor(arena);
+  // @@protoc_insertion_point(arena_constructor:Kuser.EchoBlobRequest)
+}
+EchoBlobRequest::EchoBlobRequest(const EchoBlobRequest& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  body_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
+  if (!from._internal_body().empty()) {
+    body_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_body(),
+      GetArena());
+  }
+  // @@protoc_insertion_point(copy_constructor:Kuser.EchoBlobRequest)
+}
+
+void EchoBlobRequest::SharedCtor() {
+  ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&scc_info_EchoBlobRequest_user_2eproto.base);
+  body_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
+}
+
+EchoBlobRequest::~EchoBlobRequest() {
+  // @@protoc_insertion_point(destructor:Kuser.EchoBlobRequest)
+  SharedDtor();
+  _internal_metadata_.Delete<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+void EchoBlobRequest::SharedDtor() {
+  GOOGLE_DCHECK(GetArena() == nullptr);
+  body_.DestroyNoArena(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
+}
+
+void EchoBlobRequest::ArenaDtor(void* object) {
+  EchoBlobRequest* _this = reinterpret_cast< EchoBlobRequest* >(object);
+  (void)_this;
+}
+void EchoBlobRequest::RegisterArenaDtor(::PROTOBUF_NAMESPACE_ID::Arena*) {
+}
+void EchoBlobRequest::SetCachedSize(int size) const {
+  _cached_size_.Set(size);
+}
+const EchoBlobRequest& EchoBlobRequest::default_instance() {
+  ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&::scc_info_EchoBlobRequest_user_2eproto.base);
+  return *internal_default_instance();
+}
+
+
+void EchoBlobRequest::Clear() {
+// @@protoc_insertion_point(message_clear_start:Kuser.EchoBlobRequest)
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  body_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* EchoBlobRequest::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
+  while (!ctx->Done(&ptr)) {
+    ::PROTOBUF_NAMESPACE_ID::uint32 tag;
+    ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
+    CHK_(ptr);
+    switch (tag >> 3) {
+      // bytes body = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 10)) {
+          auto str = _internal_mutable_body();
+          ptr = ::PROTOBUF_NAMESPACE_ID::internal::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      default: {
+      handle_unusual:
+        if ((tag & 7) == 4 || tag == 0) {
+          ctx->SetLastTag(tag);
+          goto success;
+        }
+        ptr = UnknownFieldParse(tag,
+            _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+            ptr, ctx);
+        CHK_(ptr != nullptr);
+        continue;
+      }
+    }  // switch
+  }  // while
+success:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto success;
+#undef CHK_
+}
+
+::PROTOBUF_NAMESPACE_ID::uint8* EchoBlobRequest::_InternalSerialize(
+    ::PROTOBUF_NAMESPACE_ID::uint8* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:Kuser.EchoBlobRequest)
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // bytes body = 1;
+  if (this->body().size() > 0) {
+    target = stream->WriteBytesMaybeAliased(
+        1, this->_internal_body(), target);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:Kuser.EchoBlobRequest)
+  return target;
+}
+
+size_t EchoBlobRequest::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:Kuser.EchoBlobRequest)
+  size_t total_size = 0;
+
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // bytes body = 1;
+  if (this->body().size() > 0) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::BytesSize(
+        this->_internal_body());
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    return ::PROTOBUF_NAMESPACE_ID::internal::ComputeUnknownFieldsSize(
+        _internal_metadata_, total_size, &_cached_size_);
+  }
+  int cached_size = ::PROTOBUF_NAMESPACE_ID::internal::ToCachedSize(total_size);
+  SetCachedSize(cached_size);
+  return total_size;
+}
+
+void EchoBlobRequest::MergeFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) {
+// @@protoc_insertion_point(generalized_merge_from_start:Kuser.EchoBlobRequest)
+  GOOGLE_DCHECK_NE(&from, this);
+  const EchoBlobRequest* source =
+      ::PROTOBUF_NAMESPACE_ID::DynamicCastToGenerated<EchoBlobRequest>(
+          &from);
+  if (source == nullptr) {
+  // @@protoc_insertion_point(generalized_merge_from_cast_fail:Kuser.EchoBlobRequest)
+    ::PROTOBUF_NAMESPACE_ID::internal::ReflectionOps::Merge(from, this);
+  } else {
+  // @@protoc_insertion_point(generalized_merge_from_cast_success:Kuser.EchoBlobRequest)
+    MergeFrom(*source);
+  }
+}
+
+void EchoBlobRequest::MergeFrom(const EchoBlobRequest& from) {
+// @@protoc_insertion_point(class_specific_merge_from_start:Kuser.EchoBlobRequest)
+  GOOGLE_DCHECK_NE(&from, this);
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (from.body().size() > 0) {
+    _internal_set_body(from._internal_body());
+  }
+}
+
+void EchoBlobRequest::CopyFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) {
+// @@protoc_insertion_point(generalized_copy_from_start:Kuser.EchoBlobRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+void EchoBlobRequest::CopyFrom(const EchoBlobRequest& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:Kuser.EchoBlobRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool EchoBlobRequest::IsInitialized() const {
+  return true;
+}
+
+void EchoBlobRequest::InternalSwap(EchoBlobRequest* other) {
+  using std::swap;
+  _internal_metadata_.Swap<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(&other->_internal_metadata_);
+  body_.Swap(&other->body_, &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata EchoBlobRequest::GetMetadata() const {
+  return GetMetadataStatic();
+}
+
+
+// ===================================================================
+
+void EchoBlobResponse::InitAsDefaultInstance() {
+}
+class EchoBlobResponse::_Internal {
+ public:
+};
+
+EchoBlobResponse::EchoBlobResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena) {
+  SharedCtor();
+  RegisterArenaDtor(arena);
+  // @@protoc_insertion_point(arena_constructor:Kuser.EchoBlobResponse)
+}
+EchoBlobResponse::EchoBlobResponse(const EchoBlobResponse& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  body_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
+  if (!from._internal_body().empty()) {
+    body_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_body(),
+      GetArena());
+  }
+  // @@protoc_insertion_point(copy_constructor:Kuser.EchoBlobResponse)
+}
+
+void EchoBlobResponse::SharedCtor() {
+  ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&scc_info_EchoBlobResponse_user_2eproto.base);
+  body_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
+}
+
+EchoBlobResponse::~EchoBlobResponse() {
+  // @@protoc_insertion_point(destructor:Kuser.EchoBlobResponse)
+  SharedDtor();
+  _internal_metadata_.Delete<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+void EchoBlobResponse::SharedDtor() {
+  GOOGLE_DCHECK(GetArena() == nullptr);
+  body_.DestroyNoArena(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
+}
+
+void EchoBlobResponse::ArenaDtor(void* object) {
+  EchoBlobResponse* _this = reinterpret_cast< EchoBlobResponse* >(object);
+  (void)_this;
+}
+void EchoBlobResponse::RegisterArenaDtor(::PROTOBUF_NAMESPACE_ID::Arena*) {
+}
+void EchoBlobResponse::SetCachedSize(int size) const {
+  _cached_size_.Set(size);
+}
+const EchoBlobResponse& EchoBlobResponse::default_instance() {
+  ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&::scc_info_EchoBlobResponse_user_2eproto.base);
+  return *internal_default_instance();
+}
+
+
+void EchoBlobResponse::Clear() {
+// @@protoc_insertion_point(message_clear_start:Kuser.EchoBlobResponse)
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  body_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* EchoBlobResponse::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
+  while (!ctx->Done(&ptr)) {
+    ::PROTOBUF_NAMESPACE_ID::uint32 tag;
+    ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
+    CHK_(ptr);
+    switch (tag >> 3) {
+      // bytes body = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 10)) {
+          auto str = _internal_mutable_body();
+          ptr = ::PROTOBUF_NAMESPACE_ID::internal::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      default: {
+      handle_unusual:
+        if ((tag & 7) == 4 || tag == 0) {
+          ctx->SetLastTag(tag);
+          goto success;
+        }
+        ptr = UnknownFieldParse(tag,
+            _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+            ptr, ctx);
+        CHK_(ptr != nullptr);
+        continue;
+      }
+    }  // switch
+  }  // while
+success:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto success;
+#undef CHK_
+}
+
+::PROTOBUF_NAMESPACE_ID::uint8* EchoBlobResponse::_InternalSerialize(
+    ::PROTOBUF_NAMESPACE_ID::uint8* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:Kuser.EchoBlobResponse)
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // bytes body = 1;
+  if (this->body().size() > 0) {
+    target = stream->WriteBytesMaybeAliased(
+        1, this->_internal_body(), target);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:Kuser.EchoBlobResponse)
+  return target;
+}
+
+size_t EchoBlobResponse::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:Kuser.EchoBlobResponse)
+  size_t total_size = 0;
+
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // bytes body = 1;
+  if (this->body().size() > 0) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::BytesSize(
+        this->_internal_body());
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    return ::PROTOBUF_NAMESPACE_ID::internal::ComputeUnknownFieldsSize(
+        _internal_metadata_, total_size, &_cached_size_);
+  }
+  int cached_size = ::PROTOBUF_NAMESPACE_ID::internal::ToCachedSize(total_size);
+  SetCachedSize(cached_size);
+  return total_size;
+}
+
+void EchoBlobResponse::MergeFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) {
+// @@protoc_insertion_point(generalized_merge_from_start:Kuser.EchoBlobResponse)
+  GOOGLE_DCHECK_NE(&from, this);
+  const EchoBlobResponse* source =
+      ::PROTOBUF_NAMESPACE_ID::DynamicCastToGenerated<EchoBlobResponse>(
+          &from);
+  if (source == nullptr) {
+  // @@protoc_insertion_point(generalized_merge_from_cast_fail:Kuser.EchoBlobResponse)
+    ::PROTOBUF_NAMESPACE_ID::internal::ReflectionOps::Merge(from, this);
+  } else {
+  // @@protoc_insertion_point(generalized_merge_from_cast_success:Kuser.EchoBlobResponse)
+    MergeFrom(*source);
+  }
+}
+
+void EchoBlobResponse::MergeFrom(const EchoBlobResponse& from) {
+// @@protoc_insertion_point(class_specific_merge_from_start:Kuser.EchoBlobResponse)
+  GOOGLE_DCHECK_NE(&from, this);
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (from.body().size() > 0) {
+    _internal_set_body(from._internal_body());
+  }
+}
+
+void EchoBlobResponse::CopyFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) {
+// @@protoc_insertion_point(generalized_copy_from_start:Kuser.EchoBlobResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+void EchoBlobResponse::CopyFrom(const EchoBlobResponse& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:Kuser.EchoBlobResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool EchoBlobResponse::IsInitialized() const {
+  return true;
+}
+
+void EchoBlobResponse::InternalSwap(EchoBlobResponse* other) {
+  using std::swap;
+  _internal_metadata_.Swap<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(&other->_internal_metadata_);
+  body_.Swap(&other->body_, &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata EchoBlobResponse::GetMetadata() const {
+  return GetMetadataStatic();
+}
+
+
+// ===================================================================
+
 UserServiceRpc::~UserServiceRpc() {}
 
 const ::PROTOBUF_NAMESPACE_ID::ServiceDescriptor* UserServiceRpc::descriptor() {
@@ -1453,6 +1918,14 @@ void UserServiceRpc::Register(::PROTOBUF_NAMESPACE_ID::RpcController* controller
   done->Run();
 }
 
+void UserServiceRpc::EchoBlob(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
+                         const ::Kuser::EchoBlobRequest*,
+                         ::Kuser::EchoBlobResponse*,
+                         ::google::protobuf::Closure* done) {
+  controller->SetFailed("Method EchoBlob() not implemented.");
+  done->Run();
+}
+
 void UserServiceRpc::CallMethod(const ::PROTOBUF_NAMESPACE_ID::MethodDescriptor* method,
                              ::PROTOBUF_NAMESPACE_ID::RpcController* controller,
                              const ::PROTOBUF_NAMESPACE_ID::Message* request,
@@ -1476,6 +1949,14 @@ void UserServiceRpc::CallMethod(const ::PROTOBUF_NAMESPACE_ID::MethodDescriptor*
                  response),
              done);
       break;
+    case 2:
+      EchoBlob(controller,
+             ::PROTOBUF_NAMESPACE_ID::internal::DownCast<const ::Kuser::EchoBlobRequest*>(
+                 request),
+             ::PROTOBUF_NAMESPACE_ID::internal::DownCast<::Kuser::EchoBlobResponse*>(
+                 response),
+             done);
+      break;
     default:
       GOOGLE_LOG(FATAL) << "Bad method index; this should never happen.";
       break;
@@ -1490,6 +1971,8 @@ const ::PROTOBUF_NAMESPACE_ID::Message& UserServiceRpc::GetRequestPrototype(
       return ::Kuser::LoginRequest::default_instance();
     case 1:
       return ::Kuser::RegisterRequest::default_instance();
+    case 2:
+      return ::Kuser::EchoBlobRequest::default_instance();
     default:
       GOOGLE_LOG(FATAL) << "Bad method index; this should never happen.";
       return *::PROTOBUF_NAMESPACE_ID::MessageFactory::generated_factory()
@@ -1505,6 +1988,8 @@ const ::PROTOBUF_NAMESPACE_ID::Message& UserServiceRpc::GetResponsePrototype(
       return ::Kuser::LoginResponse::default_instance();
     case 1:
       return ::Kuser::RegisterResponse::default_instance();
+    case 2:
+      return ::Kuser::EchoBlobResponse::default_instance();
     default:
       GOOGLE_LOG(FATAL) << "Bad method index; this should never happen.";
       return *::PROTOBUF_NAMESPACE_ID::MessageFactory::generated_factory()
@@ -1537,6 +2022,13 @@ void UserServiceRpc_Stub::Register(::PROTOBUF_NAMESPACE_ID::RpcController* contr
   channel_->CallMethod(descriptor()->method(1),
                        controller, request, response, done);
 }
+void UserServiceRpc_Stub::EchoBlob(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
+                              const ::Kuser::EchoBlobRequest* request,
+                              ::Kuser::EchoBlobResponse* response,
+                              ::google::protobuf::Closure* done) {
+  channel_->CallMethod(descriptor()->method(2),
+                       controller, request, response, done);
+}
 
 // @@protoc_insertion_point(namespace_scope)
 }  // namespace Kuser
@@ -1555,6 +2047,12 @@ template<> PROTOBUF_NOINLINE ::Kuser::RegisterRequest* Arena::CreateMaybeMessage
 }
 template<> PROTOBUF_NOINLINE ::Kuser::RegisterResponse* Arena::CreateMaybeMessage< ::Kuser::RegisterResponse >(Arena* arena) {
   return Arena::CreateMessageInternal< ::Kuser::RegisterResponse >(arena);
+}
+template<> PROTOBUF_NOINLINE ::Kuser::EchoBlobRequest* Arena::CreateMaybeMessage< ::Kuser::EchoBlobRequest >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::Kuser::EchoBlobRequest >(arena);
+}
+template<> PROTOBUF_NOINLINE ::Kuser::EchoBlobResponse* Arena::CreateMaybeMessage< ::Kuser::EchoBlobResponse >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::Kuser::EchoBlobResponse >(arena);
 }
 PROTOBUF_NAMESPACE_CLOSE
 
