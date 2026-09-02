@@ -24,7 +24,9 @@ private:
                    google::protobuf::RpcController *controller,
                    google::protobuf::Message *response,
                    google::protobuf::Closure *done,
-                   int timeout_ms);
+                   int timeout_ms,
+                   bool notify_done_on_immediate_failure,
+                   bool *pre_send_failure);
 };
 
 #endif

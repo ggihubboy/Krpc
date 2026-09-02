@@ -5,6 +5,7 @@
 #include "RpcCodec.h"
 #include "RpcError.h"
 #include "RpcPendingCall.h"
+#include "RetryPolicy.h"
 #include "ShutdownState.h"
 
 #include <muduo/net/Buffer.h>
@@ -196,6 +197,14 @@ static void TestShutdownDrainState()
     Expect(idle.ShouldStop(0, 2000), "idle server stops immediately");
 }
 
+static void TestSafeRetryPolicy()
+{
+    Expect(IsSafePreSendRetry(kRpcConnectFail), "connect failure before send is retryable");
+    Expect(!IsSafePreSendRetry(kRpcTimeout), "timeout may have reached server");
+    Expect(!IsSafePreSendRetry(kRpcOverloaded), "server rejection is not replayed implicitly");
+    Expect(!IsSafePreSendRetry(kRpcBadRequest), "bad request is not retryable");
+}
+
 static void TestHashWriteSerialized()
 {
     ConsistentHash ring;
@@ -247,6 +256,7 @@ int main()
     TestPendingCompleteOnce();
     TestStructuredControllerError();
     TestShutdownDrainState();
+    TestSafeRetryPolicy();
     TestHashWriteSerialized();
     TestMpmc();
     if (g_failed != 0)

@@ -8,6 +8,7 @@
 #include "RpcCodec.h"
 #include "RpcError.h"
 #include "RpcPendingCall.h"
+#include "RetryPolicy.h"
 #include "ServiceDiscovery.h"
 #include "TimeoutWheel.h"
 #include "ZeroCopySend.h"
@@ -26,10 +27,11 @@ static std::atomic<uint64_t> g_req_id{1};
 static void FailDone(google::protobuf::RpcController *controller,
                      google::protobuf::Closure *done,
                      int error_code,
-                     const std::string &err)
+                     const std::string &err,
+                     bool notify_done = true)
 {
     SetRpcFailed(controller, error_code, err);
-    if (done)
+    if (done && notify_done)
     {
         done->Run();
     }
@@ -80,13 +82,24 @@ bool KrpcChannel::IssueOnce(const std::string &node,
                             google::protobuf::RpcController *controller,
                             google::protobuf::Message *response,
                             google::protobuf::Closure *done,
-                            int timeout_ms)
+                            int timeout_ms,
+                            bool notify_done_on_immediate_failure,
+                            bool *pre_send_failure)
 {
+    if (pre_send_failure != nullptr)
+    {
+        *pre_send_failure = false;
+    }
     std::string ip;
     uint16_t port = 0;
     if (!ParseNode(node, &ip, &port))
     {
-        FailDone(controller, done, kRpcBadRequest, "invalid node address");
+        if (pre_send_failure != nullptr)
+        {
+            *pre_send_failure = true;
+        }
+        FailDone(controller, done, kRpcBadRequest, "invalid node address",
+                 notify_done_on_immediate_failure);
         return false;
     }
 
@@ -94,7 +107,12 @@ bool KrpcChannel::IssueOnce(const std::string &node,
     auto conn = KrpcConnectPool::GetInstance().BorrowConnection(ip, port, borrow_timeout);
     if (!conn)
     {
-        FailDone(controller, done, kRpcConnectFail, "Borrow connection from pool failed!");
+        if (pre_send_failure != nullptr)
+        {
+            *pre_send_failure = true;
+        }
+        FailDone(controller, done, kRpcConnectFail, "Borrow connection from pool failed!",
+                 notify_done_on_immediate_failure);
         CircuitBreaker::Instance().RecordFailure(node);
         return false;
     }
@@ -173,6 +191,7 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     const std::string service_name = method->service()->name();
     const uint64_t req_id = g_req_id.fetch_add(1, std::memory_order_relaxed);
     const int timeout_ms = KrpcApplication::RpcTimeoutMs();
+    const int64_t overall_deadline_ms = RpcNowMs() + timeout_ms;
 
     std::string payload;
     if (!BuildPayload(method, request, req_id, &payload))
@@ -203,24 +222,52 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
         node = alt;
     }
 
-    const bool ok = IssueOnce(node, payload, req_id, controller, response, done, timeout_ms);
-    if (done != nullptr || ok)
+    bool pre_send_failure = false;
+    const bool ok = IssueOnce(node, payload, req_id, controller, response, done, timeout_ms,
+                              false, &pre_send_failure);
+    if (ok)
     {
+        return;
+    }
+
+    const auto *krpc_controller = dynamic_cast<const Krpccontroller *>(controller);
+    const int first_error = krpc_controller != nullptr ? krpc_controller->ErrorCode() : kRpcInternal;
+    if (!pre_send_failure || !IsSafePreSendRetry(first_error))
+    {
+        if (done != nullptr)
+        {
+            done->Run();
+        }
         return;
     }
 
     const std::string alt = pick_node(node);
     if (alt.empty() || !CircuitBreaker::Instance().AllowRequest(alt))
     {
+        if (done != nullptr)
+        {
+            done->Run();
+        }
         return;
     }
+
+    const int remaining_ms = static_cast<int>(overall_deadline_ms - RpcNowMs());
+    if (remaining_ms <= 0)
+    {
+        FailDone(controller, done, kRpcTimeout, "rpc timeout");
+        return;
+    }
+
     controller->Reset();
     const uint64_t retry_id = g_req_id.fetch_add(1, std::memory_order_relaxed);
     std::string retry_payload;
     if (!BuildPayload(method, request, retry_id, &retry_payload))
     {
-        SetRpcFailed(controller, kRpcBadRequest, "Serialize request fail");
+        FailDone(controller, done, kRpcBadRequest, "Serialize request fail");
         return;
     }
-    IssueOnce(alt, retry_payload, retry_id, controller, response, nullptr, timeout_ms);
+
+    bool retry_pre_send_failure = false;
+    IssueOnce(alt, retry_payload, retry_id, controller, response, done, remaining_ms,
+              true, &retry_pre_send_failure);
 }

@@ -22,7 +22,7 @@ C++ RPC 学习骨架：Muduo + Protobuf + ZooKeeper。
 ## 明确不做
 
 - TLS / 鉴权 / 业务 Fallback
-- 滑动窗口失败率熔断、异步失败自动换节点
+- 滑动窗口失败率熔断
 - 完整的分布式追踪和直方图指标
 - IPv6 字面量地址（`ip:port` 按最后一个 `:` 切开，仅按 IPv4 来用）
 
@@ -89,6 +89,10 @@ stub.Login(&controller, &req, &resp, nullptr); // done 为空：阻塞到完成�
 ```
 
 异步：传入 `Closure*`，`CallMethod` 立即返回。失败（借连接失败、熔断、超时）也一定会调 `done->Run()`。回调在 EventLoop 线程执行，不要做重计算。
+
+同步和异步调用仅在“请求尚未发送且借连接失败”时换一个节点重试一次，
+两次尝试共享同一个总超时。请求一旦提交给连接便不自动重放，避免非幂等
+业务被执行两次。
 
 ```cpp
 KrpcConnectPool::GetInstance().WarmUp(ip, port, KrpcApplication::CpuCores());
@@ -188,5 +192,5 @@ mv Krpcheader.pb.h include/
 
 - 零拷贝仍依赖建连时扫 `/proc/self/fd` 找套接字，虚机上内核可能 `copied=1`
 - 熔断仍是连续失败次数，不是时间窗失败率
-- 异步调用失败不会自动换节点（只有同步会试一次）
+- 自动换节点仅覆盖发送前连接失败；超时、断连和服务端错误不会隐式重放
 - 没有 ASan 流水线；本地可用 `-fsanitize=address` 自行编一版
