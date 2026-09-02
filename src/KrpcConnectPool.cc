@@ -8,6 +8,7 @@
 #include "RpcPendingCall.h"
 #include "TcpSockUtil.h"
 #include "ZeroCopySend.h"
+#include "RpcMetrics.h"
 
 #include <google/protobuf/message.h>
 #include <algorithm>
@@ -263,6 +264,7 @@ void KrpcConnectPool::Shutdown()
     LOG(INFO) << "zerocopy stats send=" << ZeroCopySend::SendCount()
               << " copied=" << ZeroCopySend::CopiedCount()
               << " complete=" << ZeroCopySend::CompleteCount();
+    RpcMetrics::Instance().Dump("client");
 
     for (ConnectionBucket *bucket : buckets)
     {

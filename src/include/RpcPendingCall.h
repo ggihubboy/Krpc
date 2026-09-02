@@ -22,6 +22,13 @@ inline int64_t RpcNowMs()
         .count();
 }
 
+inline int64_t RpcNowUs()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
 // 一条连接上可以同时挂多个未完成 RPC，用 request_id 对应回包。
 struct RpcPendingCall
 {
@@ -31,8 +38,11 @@ struct RpcPendingCall
     muduo::net::EventLoop *loop = nullptr;
     muduo::net::TcpConnectionPtr conn;
     std::string node;
+    std::string service;
+    std::string method;
     uint64_t request_id = 0;
     int64_t deadline_ms = 0;
+    int64_t start_us = 0;
     bool close_on_finish = false;
 
     std::atomic<bool> completed{false};

@@ -9,6 +9,7 @@
 #include "RpcError.h"
 #include "RpcPendingCall.h"
 #include "RetryPolicy.h"
+#include "RpcMetrics.h"
 #include "ServiceDiscovery.h"
 #include "TimeoutWheel.h"
 #include "ZeroCopySend.h"
@@ -35,6 +36,23 @@ static void FailDone(google::protobuf::RpcController *controller,
     {
         done->Run();
     }
+}
+
+static void FailImmediate(google::protobuf::RpcController *controller,
+                          google::protobuf::Closure *done,
+                          int error_code,
+                          const std::string &err,
+                          int64_t start_us,
+                          uint64_t request_id,
+                          const std::string &service,
+                          const std::string &method,
+                          const std::string &node = std::string())
+{
+    const uint64_t latency_us =
+        static_cast<uint64_t>(std::max<int64_t>(0, RpcNowUs() - start_us));
+    RpcMetrics::Instance().RecordFinished(error_code, latency_us);
+    MaybeRpcAccessLog("client", request_id, service, method, node, error_code, latency_us);
+    FailDone(controller, done, error_code, err);
 }
 
 static bool ParseNode(const std::string &ip_port, std::string *ip, uint16_t *port)
@@ -84,7 +102,10 @@ bool KrpcChannel::IssueOnce(const std::string &node,
                             google::protobuf::Closure *done,
                             int timeout_ms,
                             bool notify_done_on_immediate_failure,
-                            bool *pre_send_failure)
+                            bool *pre_send_failure,
+                            const std::string &service,
+                            const std::string &method,
+                            int64_t start_us)
 {
     if (pre_send_failure != nullptr)
     {
@@ -122,10 +143,13 @@ bool KrpcChannel::IssueOnce(const std::string &node,
     pending->response = response;
     pending->done = done;
     pending->node = node;
+    pending->service = service;
+    pending->method = method;
     pending->conn = conn;
     pending->loop = conn->getLoop();
     pending->request_id = request_id;
     pending->deadline_ms = RpcNowMs() + timeout_ms;
+    pending->start_us = start_us;
 
     pending->loop->runInLoop([conn, pending, payload]() {
         if (pending->completed.load(std::memory_order_acquire))
@@ -189,14 +213,18 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     std::call_once(init_flag, []() { ServiceDiscovery::GetInstance().Init(); });
 
     const std::string service_name = method->service()->name();
+    const std::string method_name = method->name();
     const uint64_t req_id = g_req_id.fetch_add(1, std::memory_order_relaxed);
     const int timeout_ms = KrpcApplication::RpcTimeoutMs();
+    const int64_t start_us = RpcNowUs();
     const int64_t overall_deadline_ms = RpcNowMs() + timeout_ms;
+    RpcMetrics::Instance().RecordStarted();
 
     std::string payload;
     if (!BuildPayload(method, request, req_id, &payload))
     {
-        FailDone(controller, done, kRpcBadRequest, "Serialize request fail");
+        FailImmediate(controller, done, kRpcBadRequest, "Serialize request fail",
+                      start_us, req_id, service_name, method_name);
         return;
     }
 
@@ -207,7 +235,8 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     std::string node = pick_node("");
     if (node.empty())
     {
-        FailDone(controller, done, kRpcNoService, "Hash ring returned empty node!");
+        FailImmediate(controller, done, kRpcNoService, "Hash ring returned empty node!",
+                      start_us, req_id, service_name, method_name);
         return;
     }
 
@@ -216,7 +245,8 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
         const std::string alt = pick_node(node);
         if (alt.empty() || !CircuitBreaker::Instance().AllowRequest(alt))
         {
-            FailDone(controller, done, kRpcCircuitOpen, "circuit open");
+            FailImmediate(controller, done, kRpcCircuitOpen, "circuit open",
+                          start_us, req_id, service_name, method_name, node);
             return;
         }
         node = alt;
@@ -224,7 +254,7 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
 
     bool pre_send_failure = false;
     const bool ok = IssueOnce(node, payload, req_id, controller, response, done, timeout_ms,
-                              false, &pre_send_failure);
+                              false, &pre_send_failure, service_name, method_name, start_us);
     if (ok)
     {
         return;
@@ -234,6 +264,14 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     const int first_error = krpc_controller != nullptr ? krpc_controller->ErrorCode() : kRpcInternal;
     if (!pre_send_failure || !IsSafePreSendRetry(first_error))
     {
+        if (pre_send_failure)
+        {
+            const uint64_t latency_us =
+                static_cast<uint64_t>(std::max<int64_t>(0, RpcNowUs() - start_us));
+            RpcMetrics::Instance().RecordFinished(first_error, latency_us);
+            MaybeRpcAccessLog("client", req_id, service_name, method_name, node, first_error,
+                              latency_us);
+        }
         if (done != nullptr)
         {
             done->Run();
@@ -244,17 +282,17 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     const std::string alt = pick_node(node);
     if (alt.empty() || !CircuitBreaker::Instance().AllowRequest(alt))
     {
-        if (done != nullptr)
-        {
-            done->Run();
-        }
+        FailImmediate(controller, done, first_error,
+                      controller != nullptr ? controller->ErrorText() : "retry node unavailable",
+                      start_us, req_id, service_name, method_name, node);
         return;
     }
 
     const int remaining_ms = static_cast<int>(overall_deadline_ms - RpcNowMs());
     if (remaining_ms <= 0)
     {
-        FailDone(controller, done, kRpcTimeout, "rpc timeout");
+        FailImmediate(controller, done, kRpcTimeout, "rpc timeout",
+                      start_us, req_id, service_name, method_name, node);
         return;
     }
 
@@ -263,11 +301,24 @@ void KrpcChannel::CallMethod(const ::google::protobuf::MethodDescriptor *method,
     std::string retry_payload;
     if (!BuildPayload(method, request, retry_id, &retry_payload))
     {
-        FailDone(controller, done, kRpcBadRequest, "Serialize request fail");
+        FailImmediate(controller, done, kRpcBadRequest, "Serialize request fail",
+                      start_us, retry_id, service_name, method_name, alt);
         return;
     }
 
     bool retry_pre_send_failure = false;
-    IssueOnce(alt, retry_payload, retry_id, controller, response, done, remaining_ms,
-              true, &retry_pre_send_failure);
+    const bool retry_ok = IssueOnce(alt, retry_payload, retry_id, controller, response, done,
+                                    remaining_ms, true, &retry_pre_send_failure, service_name,
+                                    method_name, start_us);
+    if (!retry_ok && retry_pre_send_failure)
+    {
+        const auto *retry_controller = dynamic_cast<const Krpccontroller *>(controller);
+        const int retry_error =
+            retry_controller != nullptr ? retry_controller->ErrorCode() : kRpcInternal;
+        const uint64_t latency_us =
+            static_cast<uint64_t>(std::max<int64_t>(0, RpcNowUs() - start_us));
+        RpcMetrics::Instance().RecordFinished(retry_error, latency_us);
+        MaybeRpcAccessLog("client", retry_id, service_name, method_name, alt, retry_error,
+                          latency_us);
+    }
 }

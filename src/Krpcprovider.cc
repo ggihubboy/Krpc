@@ -8,12 +8,14 @@
 #include "RpcError.h"
 #include "RpcObjectPool.h"
 #include "RpcPendingCall.h"
+#include "RpcMetrics.h"
 #include "TcpSockUtil.h"
 #include "ZeroCopySend.h"
 
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -122,6 +124,7 @@ void KrpcProvider::Run()
         m_zk.Stop();
     }
     m_thread_pool.stop();
+    RpcMetrics::Instance().Dump("provider");
     std::cout << "RpcProvider stopped" << std::endl;
 }
 
@@ -194,6 +197,18 @@ void KrpcProvider::SendError(const muduo::net::TcpConnectionPtr &conn,
     SendFrame(conn, std::move(frame));
 }
 
+static void FinishServerRpc(uint64_t request_id,
+                            const std::string &service,
+                            const std::string &method,
+                            int code,
+                            int64_t start_us)
+{
+    const uint64_t latency_us =
+        static_cast<uint64_t>(std::max<int64_t>(0, RpcNowUs() - start_us));
+    RpcMetrics::Instance().RecordFinished(code, latency_us);
+    MaybeRpcAccessLog("server", request_id, service, method, "", code, latency_us);
+}
+
 void KrpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn,
                              muduo::net::Buffer *buffer,
                              muduo::Timestamp receive_time)
@@ -227,34 +242,42 @@ void KrpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn,
         }
 
         const uint64_t request_id = krpcHeader.request_id();
+        const std::string service_name = krpcHeader.service_name();
+        const std::string method_name = krpcHeader.method_name();
+        const int64_t start_us = RpcNowUs();
+        RpcMetrics::Instance().RecordStarted();
         if (m_shutdown.Requested())
         {
             SendError(conn, request_id, kRpcOverloaded, "server shutting down");
+            FinishServerRpc(request_id, service_name, method_name, kRpcOverloaded, start_us);
             continue;
         }
         if (krpcHeader.args_size() != static_cast<google::protobuf::uint32>(args.size()))
         {
             SendError(conn, request_id, kRpcBadRequest, "args_size mismatch");
+            FinishServerRpc(request_id, service_name, method_name, kRpcBadRequest, start_us);
             continue;
         }
 
-        auto it = service_map.find(krpcHeader.service_name());
+        auto it = service_map.find(service_name);
         if (it == service_map.end())
         {
-            SendError(conn, request_id, kRpcNoService, krpcHeader.service_name() + " is not exist");
+            SendError(conn, request_id, kRpcNoService, service_name + " is not exist");
+            FinishServerRpc(request_id, service_name, method_name, kRpcNoService, start_us);
             continue;
         }
-        auto mit = it->second.method_map.find(krpcHeader.method_name());
+        auto mit = it->second.method_map.find(method_name);
         if (mit == it->second.method_map.end())
         {
-            SendError(conn, request_id, kRpcNoMethod,
-                      krpcHeader.service_name() + "." + krpcHeader.method_name() + " is not exist");
+            SendError(conn, request_id, kRpcNoMethod, service_name + "." + method_name + " is not exist");
+            FinishServerRpc(request_id, service_name, method_name, kRpcNoMethod, start_us);
             continue;
         }
 
         if (m_pending_jobs.load(std::memory_order_relaxed) >= max_pending)
         {
             SendError(conn, request_id, kRpcOverloaded, "server overloaded");
+            FinishServerRpc(request_id, service_name, method_name, kRpcOverloaded, start_us);
             continue;
         }
 
@@ -262,12 +285,14 @@ void KrpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn,
         const google::protobuf::MethodDescriptor *method = mit->second;
         m_pending_jobs.fetch_add(1, std::memory_order_relaxed);
 
-        m_thread_pool.run([this, conn, service, method, args = std::move(args), request_id]() {
+        m_thread_pool.run([this, conn, service, method, args = std::move(args), request_id,
+                           service_name, method_name, start_us]() {
             google::protobuf::Message *request = RpcObjectPool::AcquireRequest(service, method);
             google::protobuf::Message *response = RpcObjectPool::AcquireResponse(service, method);
             if (!request->ParseFromArray(args.data(), static_cast<int>(args.size())))
             {
                 SendError(conn, request_id, kRpcBadRequest, "Parse request error");
+                FinishServerRpc(request_id, service_name, method_name, kRpcBadRequest, start_us);
                 RpcObjectPool::Release(request);
                 RpcObjectPool::Release(response);
                 m_pending_jobs.fetch_sub(1, std::memory_order_relaxed);
@@ -275,8 +300,11 @@ void KrpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn,
             }
             auto *ctrl = new Krpccontroller();
             KrpcClosure *done = RpcObjectPool::AcquireClosure();
-            done->Reset([this, conn, response, request, request_id, ctrl]() {
+            done->Reset([this, conn, response, request, request_id, ctrl, service_name, method_name,
+                         start_us]() {
                 this->SendRpcResponse(conn, response, request, request_id, ctrl);
+                const int code = ctrl->Failed() ? ctrl->ErrorCode() : kRpcOk;
+                FinishServerRpc(request_id, service_name, method_name, code, start_us);
                 delete ctrl;
                 m_pending_jobs.fetch_sub(1, std::memory_order_relaxed);
             });

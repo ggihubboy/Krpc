@@ -18,6 +18,7 @@ uint32_t KrpcApplication::m_rpc_max_body_bytes = 16u * 1024u * 1024u;
 int KrpcApplication::m_max_inflight_per_conn = 32;
 int KrpcApplication::m_server_max_pending = 4096;
 int KrpcApplication::m_server_shutdown_grace_ms = 5000;
+int KrpcApplication::m_enable_access_log = 0;
 
 static int ParseIntOr(const std::string &text, int fallback)
 {
@@ -74,6 +75,7 @@ void KrpcApplication::Init(int argc, char **argv)
     m_server_max_pending = std::max(1, ParseIntOr(m_config.Load("server_max_pending"), 4096));
     m_server_shutdown_grace_ms =
         std::max(0, ParseIntOr(m_config.Load("server_shutdown_grace_ms"), 5000));
+    m_enable_access_log = ParseIntOr(m_config.Load("enable_access_log"), 0);
     CircuitBreaker::Instance().Configure(
         ParseIntOr(m_config.Load("circuit_fail_threshold"), 5),
         ParseIntOr(m_config.Load("circuit_reset_ms"), 1000));
@@ -138,6 +140,11 @@ int KrpcApplication::ServerMaxPending()
 int KrpcApplication::ServerShutdownGraceMs()
 {
     return m_server_shutdown_grace_ms;
+}
+
+bool KrpcApplication::EnableAccessLog()
+{
+    return m_enable_access_log != 0;
 }
 
 int KrpcApplication::CpuCores()

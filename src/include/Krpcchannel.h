@@ -4,6 +4,7 @@
 #include <google/protobuf/service.h>
 
 #include <cstdint>
+#include <string>
 
 class KrpcChannel : public google::protobuf::RpcChannel
 {
@@ -26,7 +27,10 @@ private:
                    google::protobuf::Closure *done,
                    int timeout_ms,
                    bool notify_done_on_immediate_failure,
-                   bool *pre_send_failure);
+                   bool *pre_send_failure,
+                   const std::string &service,
+                   const std::string &method,
+                   int64_t start_us);
 };
 
 #endif

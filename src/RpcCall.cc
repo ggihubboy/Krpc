@@ -3,7 +3,10 @@
 #include "ConnContext.h"
 #include "KrpcConnectPool.h"
 #include "Krpccontroller.h"
+#include "RpcMetrics.h"
 #include "TimeoutWheel.h"
+
+#include <algorithm>
 
 void ApplyRpcFinish(const std::shared_ptr<RpcPendingCall> &call)
 {
@@ -27,6 +30,13 @@ void ApplyRpcFinish(const std::shared_ptr<RpcPendingCall> &call)
             }
         }
     }
+
+    const uint64_t latency_us = static_cast<uint64_t>(
+        std::max<int64_t>(0, RpcNowUs() - call->start_us));
+    const int finish_code = call->ok ? kRpcOk : call->error_code;
+    RpcMetrics::Instance().RecordFinished(finish_code, latency_us);
+    MaybeRpcAccessLog("client", call->request_id, call->service, call->method, call->node,
+                      finish_code, latency_us);
 
     if (call->ok)
     {

@@ -5,6 +5,7 @@
 #include "RpcCodec.h"
 #include "RpcError.h"
 #include "RpcPendingCall.h"
+#include "RpcMetrics.h"
 #include "RetryPolicy.h"
 #include "ShutdownState.h"
 
@@ -205,6 +206,28 @@ static void TestSafeRetryPolicy()
     Expect(!IsSafePreSendRetry(kRpcBadRequest), "bad request is not retryable");
 }
 
+static void TestRpcMetrics()
+{
+    RpcMetrics metrics;
+    metrics.RecordStarted();
+    metrics.RecordFinished(kRpcOk, 800);
+    metrics.RecordStarted();
+    metrics.RecordFinished(kRpcOk, 900);
+    metrics.RecordStarted();
+    metrics.RecordFinished(kRpcTimeout, 12'000);
+    metrics.RecordStarted();
+    metrics.RecordFinished(kRpcOverloaded, 60'000);
+
+    const RpcMetricsSnapshot snapshot = metrics.Snapshot();
+    Expect(snapshot.total == 4, "metrics count total calls");
+    Expect(snapshot.success == 2, "metrics count success");
+    Expect(snapshot.timeout == 1, "metrics count timeout");
+    Expect(snapshot.overloaded == 1, "metrics count overload");
+    Expect(snapshot.inflight == 0, "metrics inflight returns to zero");
+    Expect(snapshot.ApproxPercentileUs(0.50) == 1000, "metrics p50 fixed bucket");
+    Expect(snapshot.ApproxPercentileUs(0.99) == 100000, "metrics p99 fixed bucket");
+}
+
 static void TestHashWriteSerialized()
 {
     ConsistentHash ring;
@@ -257,6 +280,7 @@ int main()
     TestStructuredControllerError();
     TestShutdownDrainState();
     TestSafeRetryPolicy();
+    TestRpcMetrics();
     TestHashWriteSerialized();
     TestMpmc();
     if (g_failed != 0)

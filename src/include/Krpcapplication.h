@@ -23,6 +23,7 @@ public:
     static int MaxInflightPerConn();
     static int ServerMaxPending();
     static int ServerShutdownGraceMs();
+    static bool EnableAccessLog();
     static int CpuCores();
     static int ClientIoThreads();
 
@@ -42,6 +43,7 @@ private:
     static int m_max_inflight_per_conn;
     static int m_server_max_pending;
     static int m_server_shutdown_grace_ms;
+    static int m_enable_access_log;
 };
 
 #endif
