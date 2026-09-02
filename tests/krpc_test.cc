@@ -5,6 +5,7 @@
 #include "RpcCodec.h"
 #include "RpcError.h"
 #include "RpcPendingCall.h"
+#include "ShutdownState.h"
 
 #include <muduo/net/Buffer.h>
 
@@ -178,6 +179,23 @@ static void TestStructuredControllerError()
     Expect(controller.ErrorCode() == kRpcConnectFail, "generic controller helper preserves code");
 }
 
+static void TestShutdownDrainState()
+{
+    ShutdownState state(100);
+    Expect(!state.Requested(), "shutdown initially not requested");
+    Expect(!state.ShouldStop(0, 1000), "running server must not stop");
+
+    state.Request();
+    Expect(state.Requested(), "shutdown request is visible");
+    Expect(!state.ShouldStop(2, 1000), "inflight work drains before deadline");
+    Expect(!state.ShouldStop(1, 1099), "drain continues up to deadline");
+    Expect(state.ShouldStop(1, 1100), "drain stops at deadline");
+
+    ShutdownState idle(100);
+    idle.Request();
+    Expect(idle.ShouldStop(0, 2000), "idle server stops immediately");
+}
+
 static void TestHashWriteSerialized()
 {
     ConsistentHash ring;
@@ -228,6 +246,7 @@ int main()
     TestCircuitHalfOpen();
     TestPendingCompleteOnce();
     TestStructuredControllerError();
+    TestShutdownDrainState();
     TestHashWriteSerialized();
     TestMpmc();
     if (g_failed != 0)

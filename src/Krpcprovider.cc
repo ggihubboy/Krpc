@@ -7,6 +7,7 @@
 #include "RpcCodec.h"
 #include "RpcError.h"
 #include "RpcObjectPool.h"
+#include "RpcPendingCall.h"
 #include "TcpSockUtil.h"
 #include "ZeroCopySend.h"
 
@@ -31,6 +32,11 @@ void HandleStopSignal(int)
 }
 } // namespace
 
+KrpcProvider::KrpcProvider()
+    : m_shutdown(KrpcApplication::ServerShutdownGraceMs())
+{
+}
+
 void KrpcProvider::NotifyService(google::protobuf::Service *service)
 {
     ServiceInfo service_info;
@@ -53,7 +59,7 @@ void KrpcProvider::NotifyService(google::protobuf::Service *service)
 
 void KrpcProvider::RequestStop()
 {
-    m_stop.store(true, std::memory_order_release);
+    m_shutdown.Request();
 }
 
 void KrpcProvider::Run()
@@ -89,9 +95,18 @@ void KrpcProvider::Run()
     g_provider.store(this, std::memory_order_release);
     std::signal(SIGINT, HandleStopSignal);
     std::signal(SIGTERM, HandleStopSignal);
-    event_loop.runEvery(0.1, [this]() {
-        if (m_stop.load(std::memory_order_acquire))
+    event_loop.runEvery(0.05, [this]() {
+        if (m_shutdown.Requested() && !m_drain_started)
         {
+            m_drain_started = true;
+            m_zk.Stop();
+            LOG(INFO) << "RpcProvider draining, pending_jobs="
+                      << m_pending_jobs.load(std::memory_order_relaxed);
+        }
+        if (m_shutdown.ShouldStop(m_pending_jobs.load(std::memory_order_acquire), RpcNowMs()))
+        {
+            LOG(INFO) << "RpcProvider drain finished, pending_jobs="
+                      << m_pending_jobs.load(std::memory_order_relaxed);
             event_loop.quit();
         }
     });
@@ -102,7 +117,10 @@ void KrpcProvider::Run()
     event_loop.loop();
 
     g_provider.store(nullptr, std::memory_order_release);
-    m_zk.Stop();
+    if (!m_drain_started)
+    {
+        m_zk.Stop();
+    }
     m_thread_pool.stop();
     std::cout << "RpcProvider stopped" << std::endl;
 }
@@ -111,6 +129,11 @@ void KrpcProvider::OnConnection(const muduo::net::TcpConnectionPtr &conn)
 {
     if (conn->connected())
     {
+        if (m_shutdown.Requested())
+        {
+            conn->forceClose();
+            return;
+        }
         conn->setTcpNoDelay(true);
         auto ctx = EnsureConnContext(conn);
         ctx->fd = LookupTcpFd(conn);
@@ -204,6 +227,11 @@ void KrpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn,
         }
 
         const uint64_t request_id = krpcHeader.request_id();
+        if (m_shutdown.Requested())
+        {
+            SendError(conn, request_id, kRpcOverloaded, "server shutting down");
+            continue;
+        }
         if (krpcHeader.args_size() != static_cast<google::protobuf::uint32>(args.size()))
         {
             SendError(conn, request_id, kRpcBadRequest, "args_size mismatch");
@@ -265,7 +293,7 @@ void KrpcProvider::SendRpcResponse(const muduo::net::TcpConnectionPtr &conn,
 {
     if (controller && controller->Failed())
     {
-        SendError(conn, request_id, kRpcInternal, controller->ErrorText());
+        SendError(conn, request_id, controller->ErrorCode(), controller->ErrorText());
         RpcObjectPool::Release(response);
         RpcObjectPool::Release(request);
         return;

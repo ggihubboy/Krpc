@@ -75,6 +75,7 @@ total_len = 4 + header_len + payload 长度（不含最前面 4 字节）
 | `rpc_max_body_bytes` | 单帧上限，超出关连接 | 16777216 |
 | `max_inflight_per_conn` | 每条连接同时未完成 RPC 上限 | 32 |
 | `server_max_pending` | 服务端线程池排队上限，超出回过载错误 | 4096 |
+| `server_shutdown_grace_ms` | 停止注册后等待在途请求完成的最长时间 | 5000 |
 
 ## 客户端
 

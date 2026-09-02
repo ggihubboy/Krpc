@@ -17,6 +17,7 @@ int KrpcApplication::m_enable_zerocopy = 1;
 uint32_t KrpcApplication::m_rpc_max_body_bytes = 16u * 1024u * 1024u;
 int KrpcApplication::m_max_inflight_per_conn = 32;
 int KrpcApplication::m_server_max_pending = 4096;
+int KrpcApplication::m_server_shutdown_grace_ms = 5000;
 
 static int ParseIntOr(const std::string &text, int fallback)
 {
@@ -71,6 +72,8 @@ void KrpcApplication::Init(int argc, char **argv)
         std::max(1024, ParseIntOr(m_config.Load("rpc_max_body_bytes"), 16 * 1024 * 1024)));
     m_max_inflight_per_conn = std::max(1, ParseIntOr(m_config.Load("max_inflight_per_conn"), 32));
     m_server_max_pending = std::max(1, ParseIntOr(m_config.Load("server_max_pending"), 4096));
+    m_server_shutdown_grace_ms =
+        std::max(0, ParseIntOr(m_config.Load("server_shutdown_grace_ms"), 5000));
     CircuitBreaker::Instance().Configure(
         ParseIntOr(m_config.Load("circuit_fail_threshold"), 5),
         ParseIntOr(m_config.Load("circuit_reset_ms"), 1000));
@@ -130,6 +133,11 @@ int KrpcApplication::MaxInflightPerConn()
 int KrpcApplication::ServerMaxPending()
 {
     return m_server_max_pending;
+}
+
+int KrpcApplication::ServerShutdownGraceMs()
+{
+    return m_server_shutdown_grace_ms;
 }
 
 int KrpcApplication::CpuCores()

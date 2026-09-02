@@ -2,6 +2,7 @@
 #define _Krpcprovider_H__
 
 #include "google/protobuf/service.h"
+#include "ShutdownState.h"
 #include "zookeeperutil.h"
 
 #include <muduo/net/TcpServer.h>
@@ -22,6 +23,7 @@ class Krpccontroller;
 class KrpcProvider
 {
 public:
+    KrpcProvider();
     void NotifyService(google::protobuf::Service *service);
     ~KrpcProvider();
     void Run();
@@ -32,7 +34,8 @@ private:
     muduo::ThreadPool m_thread_pool;
     ZkClient m_zk;
     std::shared_ptr<muduo::net::TcpServer> m_server;
-    std::atomic<bool> m_stop{false};
+    ShutdownState m_shutdown;
+    bool m_drain_started = false;
     std::atomic<int> m_pending_jobs{0};
 
     struct ServiceInfo

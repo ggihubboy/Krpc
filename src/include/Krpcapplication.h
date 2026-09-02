@@ -22,6 +22,7 @@ public:
     static uint32_t RpcMaxBodyBytes();
     static int MaxInflightPerConn();
     static int ServerMaxPending();
+    static int ServerShutdownGraceMs();
     static int CpuCores();
     static int ClientIoThreads();
 
@@ -40,6 +41,7 @@ private:
     static uint32_t m_rpc_max_body_bytes;
     static int m_max_inflight_per_conn;
     static int m_server_max_pending;
+    static int m_server_shutdown_grace_ms;
 };
 
 #endif
