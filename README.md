@@ -72,7 +72,7 @@ total_len = 4 + header_len + payload 长度（不含最前面 4 字节）
 | `tcp_keepalive_idle_s` | TCP keepalive 空闲多久开始探测 | 30 |
 | `conn_idle_evict_ms` | 空闲超过该毫秒且无在途 RPC 则关掉；`0` 关闭 | 60000 |
 | `zerocopy_threshold` | 小于该字节数走普通 send | 16384 |
-| `enable_zerocopy` | `1` 打开内核零拷贝；`0` 关闭 | 1 |
+| `enable_zerocopy` | `1` 打开实验性的内核零拷贝；`0` 关闭 | 0 |
 | `rpc_max_body_bytes` | 单帧上限，超出关连接 | 16777216 |
 | `max_inflight_per_conn` | 每条连接同时未完成 RPC 上限 | 32 |
 | `server_max_pending` | 服务端线程池排队上限，超出回过载错误 | 4096 |
@@ -200,7 +200,8 @@ mv Krpcheader.pb.h include/
 
 ## 已知边界
 
-- 零拷贝仍依赖建连时扫 `/proc/self/fd` 找套接字，虚机上内核可能 `copied=1`
+- 零拷贝默认关闭：仍依赖建连时扫 `/proc/self/fd` 找套接字，且 Muduo 会把
+  `MSG_ZEROCOPY` 完成事件当作 `EPOLLERR` 记录；仅用于专项实验，不作为正确性路径
 - 熔断仍是连续失败次数，不是时间窗失败率
 - 自动换节点仅覆盖发送前连接失败；超时、断连和服务端错误不会隐式重放
 - 大包连接仍和 Muduo `outputBuffer` 共用 fd，不另建自管 socket

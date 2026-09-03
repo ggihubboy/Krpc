@@ -42,12 +42,13 @@ CircuitBreaker::NodeState *CircuitBreaker::GetOrCreate(const std::string &node)
         auto it = nodes_.find(node);
         if (it == nodes_.end())
         {
-            state = new NodeState();
-            nodes_[node] = state;
+            auto owned = std::make_unique<NodeState>();
+            state = owned.get();
+            nodes_[node] = std::move(owned);
         }
         else
         {
-            state = it->second;
+            state = it->second.get();
         }
     }
     last_node = node;

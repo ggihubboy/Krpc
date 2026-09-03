@@ -54,6 +54,24 @@ krpc_wait_for_zookeeper() {
     krpc_wait_for_tcp "${host}" "${port}" "${seconds}" "ZooKeeper"
 }
 
+krpc_wait_for_zookeeper_cli() {
+    local seconds="${KRPC_ZK_WAIT_SECONDS:-30}"
+    local i
+    if [[ ${#COMPOSE_CMD[@]} -eq 0 || -z "${KRPC_COMPOSE_FILE:-}" ]]; then
+        echo "Compose must be resolved before probing ZooKeeper." >&2
+        return 1
+    fi
+    for i in $(seq 1 "${seconds}"); do
+        if "${COMPOSE_CMD[@]}" -f "${KRPC_COMPOSE_FILE}" exec -T zookeeper \
+            zkCli.sh -server 127.0.0.1:2181 ls / >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "ZooKeeper did not accept CLI requests after ${seconds}s." >&2
+    return 1
+}
+
 krpc_wait_for_process() {
     local pid="$1"
     local seconds="${2:-5}"

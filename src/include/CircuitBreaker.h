@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -47,7 +48,7 @@ private:
     int reset_ms_ = 1000;
 
     std::mutex mu_;
-    std::unordered_map<std::string, NodeState *> nodes_;
+    std::unordered_map<std::string, std::unique_ptr<NodeState>> nodes_;
 };
 
 #endif

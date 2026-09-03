@@ -145,7 +145,6 @@ void KrpcProvider::OnConnection(const muduo::net::TcpConnectionPtr &conn)
         }
         return;
     }
-    conn->shutdown();
 }
 
 void KrpcProvider::SendFrame(const muduo::net::TcpConnectionPtr &conn, std::string frame)

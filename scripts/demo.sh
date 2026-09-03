@@ -7,10 +7,6 @@ cd "$ROOT"
 source "$ROOT/scripts/runtime_common.sh"
 
 BIN="${KRPC_BIN_DIR:-$ROOT/build/bin}"
-CONF="$ROOT/bin/test.conf"
-CONF2="$ROOT/bin/test-8001.conf"
-export KRPC_COMPOSE_FILE="$ROOT/docker-compose.yml"
-export COMPOSE_PROJECT_NAME="${KRPC_COMPOSE_PROJECT:-krpc-demo}"
 
 if [[ ! -x "$BIN/server" || ! -x "$BIN/client" ]]; then
     echo "Build the project first: cmake --build build -j2" >&2
@@ -22,12 +18,28 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
+TMP="$(mktemp -d)"
+CONF="$TMP/test.conf"
+CONF2="$TMP/test-8001.conf"
+export KRPC_ZK_HOST_PORT="${KRPC_ZK_HOST_PORT:-12181}"
+export KRPC_ZK_PORT="$KRPC_ZK_HOST_PORT"
+export KRPC_COMPOSE_FILE="$ROOT/docker-compose.yml"
+export COMPOSE_PROJECT_NAME="${KRPC_COMPOSE_PROJECT:-krpc-demo}"
+
+sed "s/^zookeeperport=.*/zookeeperport=${KRPC_ZK_HOST_PORT}/" "$ROOT/bin/test.conf" >"$CONF"
+sed "s/^zookeeperport=.*/zookeeperport=${KRPC_ZK_HOST_PORT}/" "$ROOT/bin/test-8001.conf" >"$CONF2"
+
 krpc_resolve_compose
 export KRPC_STARTED_COMPOSE=1
-trap krpc_cleanup_runtime EXIT
+cleanup() {
+    krpc_cleanup_runtime
+    rm -rf "$TMP"
+}
+trap cleanup EXIT
 
 "${COMPOSE_CMD[@]}" -f "$KRPC_COMPOSE_FILE" up -d
 krpc_wait_for_zookeeper
+krpc_wait_for_zookeeper_cli
 
 "$BIN/server" -i "$CONF" &
 SERVER1_PID=$!

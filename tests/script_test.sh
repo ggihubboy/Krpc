@@ -19,6 +19,11 @@ trap '[[ $BASHPID -eq $_test_main_pid ]] && rm -rf "$tmp"' EXIT
 
 PATH="$tmp/empty:$PATH"
 mkdir -p "$tmp/empty"
+cat >"$tmp/empty/docker" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$tmp/empty/docker"
 if ( unset KRPC_COMPOSE_BIN; krpc_resolve_compose ); then
     echo "FAIL: resolve_compose should fail without Compose" >&2
     failed=$((failed + 1))

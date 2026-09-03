@@ -6,15 +6,35 @@ namespace
 {
 constexpr size_t kMaxPerType = 64;
 
-thread_local std::unordered_map<const google::protobuf::Descriptor *,
-                                std::vector<google::protobuf::Message *>>
-    g_msg_pool;
-thread_local std::vector<KrpcClosure *> g_closure_pool;
+struct ThreadLocalPools
+{
+    ~ThreadLocalPools()
+    {
+        for (auto &entry : messages)
+        {
+            for (auto *message : entry.second)
+            {
+                delete message;
+            }
+        }
+        for (auto *closure : closures)
+        {
+            delete closure;
+        }
+    }
+
+    std::unordered_map<const google::protobuf::Descriptor *,
+                       std::vector<google::protobuf::Message *>>
+        messages;
+    std::vector<KrpcClosure *> closures;
+};
+
+thread_local ThreadLocalPools g_pools;
 
 google::protobuf::Message *AcquireByPrototype(const google::protobuf::Message &prototype)
 {
     const google::protobuf::Descriptor *desc = prototype.GetDescriptor();
-    auto &pool = g_msg_pool[desc];
+    auto &pool = g_pools.messages[desc];
     if (!pool.empty())
     {
         google::protobuf::Message *msg = pool.back();
@@ -56,10 +76,10 @@ google::protobuf::Message *RpcObjectPool::AcquireResponse(
 
 KrpcClosure *RpcObjectPool::AcquireClosure()
 {
-    if (!g_closure_pool.empty())
+    if (!g_pools.closures.empty())
     {
-        KrpcClosure *c = g_closure_pool.back();
-        g_closure_pool.pop_back();
+        KrpcClosure *c = g_pools.closures.back();
+        g_pools.closures.pop_back();
         return c;
     }
     return new KrpcClosure();
@@ -72,7 +92,7 @@ void RpcObjectPool::Release(google::protobuf::Message *msg)
         return;
     }
     const google::protobuf::Descriptor *desc = msg->GetDescriptor();
-    auto &pool = g_msg_pool[desc];
+    auto &pool = g_pools.messages[desc];
     if (pool.size() >= kMaxPerType)
     {
         delete msg;
@@ -89,10 +109,10 @@ void RpcObjectPool::RecycleClosure(KrpcClosure *c)
         return;
     }
     c->Reset(nullptr);
-    if (g_closure_pool.size() >= kMaxPerType)
+    if (g_pools.closures.size() >= kMaxPerType)
     {
         delete c;
         return;
     }
-    g_closure_pool.push_back(c);
+    g_pools.closures.push_back(c);
 }

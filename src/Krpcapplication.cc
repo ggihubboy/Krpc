@@ -13,7 +13,7 @@ int KrpcApplication::m_rpc_timeout_ms = 3000;
 int KrpcApplication::m_tcp_keepalive_idle_s = 30;
 int KrpcApplication::m_conn_idle_evict_ms = 60000;
 int KrpcApplication::m_zerocopy_threshold = 16384;
-int KrpcApplication::m_enable_zerocopy = 1;
+int KrpcApplication::m_enable_zerocopy = 0;
 uint32_t KrpcApplication::m_rpc_max_body_bytes = 16u * 1024u * 1024u;
 int KrpcApplication::m_max_inflight_per_conn = 32;
 int KrpcApplication::m_server_max_pending = 4096;
@@ -68,7 +68,7 @@ void KrpcApplication::Init(int argc, char **argv)
     m_tcp_keepalive_idle_s = std::max(1, ParseIntOr(m_config.Load("tcp_keepalive_idle_s"), 30));
     m_conn_idle_evict_ms = std::max(0, ParseIntOr(m_config.Load("conn_idle_evict_ms"), 60000));
     m_zerocopy_threshold = std::max(0, ParseIntOr(m_config.Load("zerocopy_threshold"), 16384));
-    m_enable_zerocopy = ParseIntOr(m_config.Load("enable_zerocopy"), 1);
+    m_enable_zerocopy = ParseIntOr(m_config.Load("enable_zerocopy"), 0);
     m_rpc_max_body_bytes = static_cast<uint32_t>(
         std::max(1024, ParseIntOr(m_config.Load("rpc_max_body_bytes"), 16 * 1024 * 1024)));
     m_max_inflight_per_conn = std::max(1, ParseIntOr(m_config.Load("max_inflight_per_conn"), 32));
