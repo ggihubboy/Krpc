@@ -44,6 +44,7 @@ struct RpcPendingCall
     int64_t deadline_ms = 0;
     int64_t start_us = 0;
     bool close_on_finish = false;
+    std::atomic<bool> request_submitted{false};
 
     std::atomic<bool> completed{false};
     bool ok = false;

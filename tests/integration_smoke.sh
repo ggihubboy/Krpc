@@ -34,6 +34,8 @@ SERVER1_PID=$!
 SERVER2_PID=$!
 krpc_wait_for_process "$SERVER1_PID" 5
 krpc_wait_for_process "$SERVER2_PID" 5
+krpc_wait_for_tcp 127.0.0.1 8000 15 "RPC server"
+krpc_wait_for_tcp 127.0.0.1 8001 15 "RPC server"
 
 children=""
 for _ in $(seq 1 15); do

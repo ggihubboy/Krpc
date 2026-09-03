@@ -47,17 +47,24 @@ if krpc_wait_for_zookeeper; then
     failed=$((failed + 1))
 fi
 
-sleep 30 &
+cat >"$tmp/graceful-server" <<'EOF'
+#!/usr/bin/env bash
+trap 'sleep 0.2; echo "server1-stopped" >>"${KRPC_COMPOSE_LOG}"; exit 0' TERM
+touch "${KRPC_SERVER_READY}"
+while true; do
+    sleep 1
+done
+EOF
+chmod +x "$tmp/graceful-server"
+export KRPC_SERVER_READY="$tmp/server.ready"
+"$tmp/graceful-server" &
 SERVER1_PID=$!
+while [[ ! -f "$KRPC_SERVER_READY" ]]; do sleep 0.01; done
 sleep 30 &
 SERVER2_PID=$!
 export KRPC_STARTED_COMPOSE=1
 export KRPC_COMPOSE_FILE="$ROOT/docker-compose.yml"
-echo "DEBUG compose_cmd=${COMPOSE_CMD[*]} started=${KRPC_STARTED_COMPOSE} file=${KRPC_COMPOSE_FILE} log=${KRPC_COMPOSE_LOG}" >&2
-type docker-compose >&2 || true
 krpc_cleanup_runtime
-echo "DEBUG log_exists=$([[ -f ${KRPC_COMPOSE_LOG} ]] && echo yes || echo no)" >&2
-cat "${KRPC_COMPOSE_LOG}" 2>/dev/null >&2 || true
 if kill -0 "${SERVER1_PID}" 2>/dev/null || kill -0 "${SERVER2_PID}" 2>/dev/null; then
     echo "FAIL: cleanup_runtime left server processes running" >&2
     failed=$((failed + 1))
@@ -65,6 +72,10 @@ if kill -0 "${SERVER1_PID}" 2>/dev/null || kill -0 "${SERVER2_PID}" 2>/dev/null;
 fi
 if [[ ! -s "${KRPC_COMPOSE_LOG}" ]] || ! grep -q down "${KRPC_COMPOSE_LOG}"; then
     echo "FAIL: cleanup_runtime should run compose down" >&2
+    failed=$((failed + 1))
+fi
+if [[ "$(sed -n '1p' "${KRPC_COMPOSE_LOG}")" != "server1-stopped" ]]; then
+    echo "FAIL: cleanup_runtime should wait for servers before compose down" >&2
     failed=$((failed + 1))
 fi
 

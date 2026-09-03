@@ -23,12 +23,13 @@ void ZkClient::Start()
     std::string port = KrpcApplication::GetInstance().GetConfig().Load("zookeeperport");
     m_connstr = host + ":" + port;
 
-    m_zhandle = zookeeper_init(m_connstr.c_str(), &ZkClient::SessionWatcher, 6000, nullptr, this, 0);
-    if (m_zhandle == nullptr)
+    zhandle_t *handle = zookeeper_init(m_connstr.c_str(), &ZkClient::SessionWatcher, 6000, nullptr, this, 0);
+    if (handle == nullptr)
     {
         LOG(ERROR) << "zookeeper_init error";
         exit(EXIT_FAILURE);
     }
+    m_handle.Replace(handle);
 
     if (!m_reconnect_thread.joinable())
     {
@@ -43,18 +44,17 @@ void ZkClient::Start()
 
 void ZkClient::Stop()
 {
-    m_stop.store(true, std::memory_order_relaxed);
-    m_need_reconnect.store(false, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(m_mu);
+        m_stop.store(true, std::memory_order_release);
+        m_need_reconnect.store(false, std::memory_order_release);
+    }
     m_cv.notify_all();
     if (m_reconnect_thread.joinable())
     {
         m_reconnect_thread.join();
     }
-    if (m_zhandle != nullptr)
-    {
-        zookeeper_close(m_zhandle);
-        m_zhandle = nullptr;
-    }
+    m_handle.Close();
     std::lock_guard<std::mutex> lock(m_mu);
     m_connected = false;
 }
@@ -92,8 +92,8 @@ void ZkClient::OnSessionEvent(int state)
         {
             std::lock_guard<std::mutex> lock(m_mu);
             m_connected = false;
+            m_need_reconnect.store(true, std::memory_order_release);
         }
-        m_need_reconnect.store(true, std::memory_order_relaxed);
         m_cv.notify_all();
     }
 }
@@ -118,37 +118,38 @@ void ZkClient::ReconnectLoop()
 
 void ZkClient::RecreateSession()
 {
-    zhandle_t *old = nullptr;
     {
         std::lock_guard<std::mutex> lock(m_mu);
-        old = m_zhandle;
-        m_zhandle = nullptr;
         m_connected = false;
     }
-    if (old != nullptr)
-    {
-        zookeeper_close(old);
-    }
+    m_handle.Close();
     zhandle_t *zh = zookeeper_init(m_connstr.c_str(), &ZkClient::SessionWatcher, 6000, nullptr, this, 0);
     if (zh == nullptr)
     {
         LOG(ERROR) << "zookeeper reconnect failed, will retry";
-        m_need_reconnect.store(true, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(m_mu);
+            m_need_reconnect.store(true, std::memory_order_release);
+        }
         m_cv.notify_all();
         return;
     }
-    {
-        std::lock_guard<std::mutex> lock(m_mu);
-        m_zhandle = zh;
-    }
+    m_handle.Replace(zh);
 
     {
         std::unique_lock<std::mutex> lock(m_mu);
-        if (!m_cv.wait_for(lock, std::chrono::seconds(6), [this] { return m_connected; }))
+        if (!m_cv.wait_for(lock, std::chrono::seconds(6), [this] {
+                return m_connected || m_stop.load(std::memory_order_acquire);
+            }))
         {
             LOG(ERROR) << "zookeeper reconnect wait timeout";
-            m_need_reconnect.store(true, std::memory_order_relaxed);
+            m_need_reconnect.store(true, std::memory_order_release);
+            lock.unlock();
             m_cv.notify_all();
+            return;
+        }
+        if (m_stop.load(std::memory_order_acquire))
+        {
             return;
         }
     }
@@ -179,15 +180,18 @@ void ZkClient::ReplayCreates()
         int bufferlen = sizeof(path_buffer);
         const char *data = spec.data.empty() ? nullptr : spec.data.c_str();
         const int datalen = spec.data.empty() ? 0 : static_cast<int>(spec.data.size());
-        int flag = zoo_exists(m_zhandle, spec.path.c_str(), 0, nullptr);
-        if (flag == ZNONODE)
-        {
-            flag = zoo_create(m_zhandle, spec.path.c_str(), data, datalen, &ZOO_OPEN_ACL_UNSAFE, spec.state,
-                              path_buffer, bufferlen);
-            if (flag != ZOK && flag != ZNODEEXISTS)
+        const auto result = m_handle.WithHandle([&](zhandle_t *handle) {
+            int flag = zoo_exists(handle, spec.path.c_str(), 0, nullptr);
+            if (flag == ZNONODE)
             {
-                LOG(ERROR) << "znode recreate failed path:" << spec.path;
+                flag = zoo_create(handle, spec.path.c_str(), data, datalen, &ZOO_OPEN_ACL_UNSAFE, spec.state,
+                                  path_buffer, bufferlen);
             }
+            return flag;
+        });
+        if (!result.has_value() || (*result != ZOK && *result != ZNODEEXISTS))
+        {
+            LOG(ERROR) << "znode recreate failed path:" << spec.path;
         }
     }
 }
@@ -202,13 +206,17 @@ void ZkClient::ReplayWatches()
     for (const auto &w : watches)
     {
         struct String_vector nodes;
-        const int flag = zoo_wget_children(m_zhandle, w.path.c_str(), w.fn, w.ctx, &nodes);
-        if (flag == ZOK)
+        const auto result = m_handle.WithHandle([&](zhandle_t *handle) {
+            return zoo_wget_children(handle, w.path.c_str(), w.fn, w.ctx, &nodes);
+        });
+        if (result.has_value() && *result == ZOK)
         {
             deallocate_String_vector(&nodes);
             if (w.fn)
             {
-                w.fn(m_zhandle, ZOO_CHILD_EVENT, ZOO_CONNECTED_STATE, w.path.c_str(), w.ctx);
+                // Project watchers do not consume the handle. Invoke outside
+                // the guard so a watcher can safely issue another ZK call.
+                w.fn(nullptr, ZOO_CHILD_EVENT, ZOO_CONNECTED_STATE, w.path.c_str(), w.ctx);
             }
         }
         else
@@ -248,19 +256,27 @@ void ZkClient::Create(const char *path, const char *data, int datalen, int state
         }
     }
 
-    int flag = zoo_exists(m_zhandle, path, 0, nullptr);
-    if (flag == ZNONODE)
+    const auto result = m_handle.WithHandle([&](zhandle_t *handle) {
+        int flag = zoo_exists(handle, path, 0, nullptr);
+        if (flag == ZNONODE)
+        {
+            flag = zoo_create(handle, path, data, datalen, &ZOO_OPEN_ACL_UNSAFE, state, path_buffer, bufferlen);
+        }
+        return flag;
+    });
+    if (!result.has_value())
     {
-        flag = zoo_create(m_zhandle, path, data, datalen, &ZOO_OPEN_ACL_UNSAFE, state, path_buffer, bufferlen);
-        if (flag == ZOK)
-        {
-            LOG(INFO) << "znode create success... path:" << path;
-        }
-        else
-        {
-            LOG(ERROR) << "znode create failed... path:" << path;
-            exit(EXIT_FAILURE);
-        }
+        LOG(ERROR) << "znode create skipped without an active session... path:" << path;
+        return;
+    }
+    if (*result == ZOK || *result == ZNODEEXISTS)
+    {
+        LOG(INFO) << "znode create success... path:" << path;
+    }
+    else
+    {
+        LOG(ERROR) << "znode create failed... path:" << path;
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -269,8 +285,9 @@ std::string ZkClient::GetData(const char *path)
     char buf[64] = {0};
     int bufferlen = sizeof(buf);
 
-    int flag = zoo_get(m_zhandle, path, 0, buf, &bufferlen, nullptr);
-    if (flag != ZOK)
+    const auto result = m_handle.WithHandle(
+        [&](zhandle_t *handle) { return zoo_get(handle, path, 0, buf, &bufferlen, nullptr); });
+    if (!result.has_value() || *result != ZOK)
     {
         LOG(ERROR) << "zoo_get error";
         return "";
@@ -303,10 +320,11 @@ std::vector<std::string> ZkClient::GetChildren(const char *path, watcher_fn fn, 
     }
 
     struct String_vector nodes;
-    int flag = zoo_wget_children(m_zhandle, path, fn, cbContext, &nodes);
+    const auto result = m_handle.WithHandle(
+        [&](zhandle_t *handle) { return zoo_wget_children(handle, path, fn, cbContext, &nodes); });
 
     std::vector<std::string> vec;
-    if (flag == ZOK)
+    if (result.has_value() && *result == ZOK)
     {
         for (int i = 0; i < nodes.count; ++i)
         {

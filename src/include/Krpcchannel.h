@@ -4,6 +4,7 @@
 #include <google/protobuf/service.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 class KrpcChannel : public google::protobuf::RpcChannel
@@ -19,18 +20,19 @@ public:
                     ::google::protobuf::Closure *done) override;
 
 private:
-    bool IssueOnce(const std::string &node,
-                   const std::string &payload,
-                   uint64_t request_id,
-                   google::protobuf::RpcController *controller,
-                   google::protobuf::Message *response,
-                   google::protobuf::Closure *done,
-                   int timeout_ms,
-                   bool notify_done_on_immediate_failure,
-                   bool *pre_send_failure,
-                   const std::string &service,
-                   const std::string &method,
-                   int64_t start_us);
+    static bool IssueOnce(const std::string &node,
+                          const std::string &payload,
+                          uint64_t request_id,
+                          google::protobuf::RpcController *controller,
+                          google::protobuf::Message *response,
+                          google::protobuf::Closure *done,
+                          int timeout_ms,
+                          bool notify_done_on_immediate_failure,
+                          bool *pre_send_failure,
+                          const std::string &service,
+                          const std::string &method,
+                          int64_t start_us,
+                          std::function<void()> async_pre_send_fail = {});
 };
 
 #endif

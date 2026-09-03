@@ -25,16 +25,17 @@ krpc_tcp_open() {
     local host="$1"
     local port="$2"
     if command -v timeout >/dev/null 2>&1; then
-        timeout 1 bash -c "echo >\"/dev/tcp/${host}/${port}\"" >/dev/null 2>&1
+        timeout 1 bash -c "exec 3<>\"/dev/tcp/${host}/${port}\"" >/dev/null 2>&1
     else
-        bash -c "echo >\"/dev/tcp/${host}/${port}\"" >/dev/null 2>&1
+        bash -c "exec 3<>\"/dev/tcp/${host}/${port}\"" >/dev/null 2>&1
     fi
 }
 
-krpc_wait_for_zookeeper() {
-    local host="${KRPC_ZK_HOST:-127.0.0.1}"
-    local port="${KRPC_ZK_PORT:-2181}"
-    local seconds="${KRPC_ZK_WAIT_SECONDS:-30}"
+krpc_wait_for_tcp() {
+    local host="$1"
+    local port="$2"
+    local seconds="${3:-30}"
+    local label="${4:-service}"
     local i
     for i in $(seq 1 "${seconds}"); do
         if krpc_tcp_open "${host}" "${port}"; then
@@ -42,8 +43,15 @@ krpc_wait_for_zookeeper() {
         fi
         sleep 1
     done
-    echo "ZooKeeper at ${host}:${port} was not ready after ${seconds}s." >&2
+    echo "${label} at ${host}:${port} was not ready after ${seconds}s." >&2
     return 1
+}
+
+krpc_wait_for_zookeeper() {
+    local host="${KRPC_ZK_HOST:-127.0.0.1}"
+    local port="${KRPC_ZK_PORT:-2181}"
+    local seconds="${KRPC_ZK_WAIT_SECONDS:-30}"
+    krpc_wait_for_tcp "${host}" "${port}" "${seconds}" "ZooKeeper"
 }
 
 krpc_wait_for_process() {
@@ -68,9 +76,39 @@ krpc_compose_down() {
     "${COMPOSE_CMD[@]}" -f "${compose_file}" down --remove-orphans || true
 }
 
+krpc_stop_process() {
+    local pid="${1:-}"
+    local seconds="${2:-${KRPC_STOP_WAIT_SECONDS:-10}}"
+    local ticks=$((seconds * 10))
+    local i state
+    [[ -z "${pid}" ]] && return 0
+    if ! kill -0 "${pid}" 2>/dev/null; then
+        wait "${pid}" 2>/dev/null || true
+        return 0
+    fi
+
+    kill "${pid}" 2>/dev/null || true
+    for ((i = 0; i < ticks; ++i)); do
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            wait "${pid}" 2>/dev/null || true
+            return 0
+        fi
+        state="$(ps -o stat= -p "${pid}" 2>/dev/null || true)"
+        if [[ -z "${state}" || "${state}" == Z* ]]; then
+            wait "${pid}" 2>/dev/null || true
+            return 0
+        fi
+        sleep 0.1
+    done
+
+    echo "Process ${pid} did not stop after ${seconds}s; sending SIGKILL." >&2
+    kill -KILL "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+}
+
 krpc_cleanup_runtime() {
-    [[ -n "${SERVER1_PID:-}" ]] && kill "${SERVER1_PID}" 2>/dev/null || true
-    [[ -n "${SERVER2_PID:-}" ]] && kill "${SERVER2_PID}" 2>/dev/null || true
+    krpc_stop_process "${SERVER1_PID:-}"
+    krpc_stop_process "${SERVER2_PID:-}"
     if [[ "${KRPC_STARTED_COMPOSE:-0}" == "1" ]]; then
         krpc_compose_down "${KRPC_COMPOSE_FILE:-}"
     fi

@@ -1,6 +1,8 @@
 #ifndef _zookeeperutil_h_
 #define _zookeeperutil_h_
 
+#include "ZkHandleGuard.h"
+
 #include <zookeeper/zookeeper.h>
 
 #include <atomic>
@@ -51,7 +53,7 @@ private:
     void ReplayWatches();
 
     std::string m_connstr;
-    zhandle_t *m_zhandle = nullptr;
+    ZkHandleGuard m_handle;
     std::mutex m_mu;
     std::condition_variable m_cv;
     bool m_connected = false;

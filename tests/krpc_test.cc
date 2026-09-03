@@ -315,6 +315,28 @@ static void TestZkHandleGuardSerializesReplacement()
     Expect(!guard.WithHandle([](zhandle_t *) { return true; }).has_value(), "closed guard rejects operations");
 }
 
+static void TestZkHandleGuardClosesOutsideLock()
+{
+    ZkHandleGuard *guard_ptr = nullptr;
+    auto *first = reinterpret_cast<zhandle_t *>(0x1);
+    auto *second = reinterpret_cast<zhandle_t *>(0x2);
+    std::atomic<bool> close_callback_reentered{false};
+    ZkHandleGuard guard([&](zhandle_t *closed) {
+        if (closed != first)
+        {
+            return;
+        }
+        const auto current = guard_ptr->WithHandle(
+            [second](zhandle_t *handle) { return handle == second; });
+        close_callback_reentered.store(current.value_or(false), std::memory_order_release);
+    });
+    guard_ptr = &guard;
+    guard.Replace(first);
+    guard.Replace(second);
+    Expect(close_callback_reentered.load(std::memory_order_acquire),
+           "close callback can re-enter guard without deadlock");
+}
+
 static void TestPendingWorkEnforcesLimitAndTracksSends()
 {
     PendingWork work;
@@ -428,6 +450,7 @@ int main()
     TestHashWriteSerialized();
     TestMpmc();
     TestZkHandleGuardSerializesReplacement();
+    TestZkHandleGuardClosesOutsideLock();
     TestPendingWorkEnforcesLimitAndTracksSends();
     TestRetryAttemptStateMatrix();
     if (g_failed != 0)

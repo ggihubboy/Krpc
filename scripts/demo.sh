@@ -35,7 +35,8 @@ SERVER1_PID=$!
 SERVER2_PID=$!
 krpc_wait_for_process "$SERVER1_PID" 5
 krpc_wait_for_process "$SERVER2_PID" 5
-sleep 1
+krpc_wait_for_tcp 127.0.0.1 8000 15 "RPC server"
+krpc_wait_for_tcp 127.0.0.1 8001 15 "RPC server"
 
 "$BIN/client" -i "$CONF"
 echo "Demo finished: Login + 32KB EchoBlob succeeded against a two-instance cluster."
