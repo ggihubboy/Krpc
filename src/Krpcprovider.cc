@@ -102,13 +102,11 @@ void KrpcProvider::Run()
         {
             m_drain_started = true;
             m_zk.Stop();
-            LOG(INFO) << "RpcProvider draining, pending_jobs="
-                      << m_pending_jobs.load(std::memory_order_relaxed);
+            LOG(INFO) << "RpcProvider draining, pending_jobs=" << m_work.Total();
         }
-        if (m_shutdown.ShouldStop(m_pending_jobs.load(std::memory_order_acquire), RpcNowMs()))
+        if (m_shutdown.ShouldStop(m_work.Total(), RpcNowMs()))
         {
-            LOG(INFO) << "RpcProvider drain finished, pending_jobs="
-                      << m_pending_jobs.load(std::memory_order_relaxed);
+            LOG(INFO) << "RpcProvider drain finished, pending_jobs=" << m_work.Total();
             event_loop.quit();
         }
     });
@@ -156,16 +154,17 @@ void KrpcProvider::SendFrame(const muduo::net::TcpConnectionPtr &conn, std::stri
     {
         return;
     }
-    auto send_fn = [conn, frame = std::move(frame)]() {
-        if (!conn->connected())
+    m_work.BeginSend();
+    auto send_fn = [this, conn, frame = std::move(frame)]() {
+        if (conn->connected())
         {
-            return;
+            auto buf = std::make_shared<std::vector<char>>(frame.begin(), frame.end());
+            if (!ZeroCopySend::TrySend(conn, buf))
+            {
+                conn->send(buf->data(), static_cast<int>(buf->size()));
+            }
         }
-        auto buf = std::make_shared<std::vector<char>>(frame.begin(), frame.end());
-        if (!ZeroCopySend::TrySend(conn, buf))
-        {
-            conn->send(buf->data(), static_cast<int>(buf->size()));
-        }
+        m_work.EndSend();
     };
     if (conn->getLoop()->isInLoopThread())
     {
@@ -274,7 +273,7 @@ void KrpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn,
             continue;
         }
 
-        if (m_pending_jobs.load(std::memory_order_relaxed) >= max_pending)
+        if (!m_work.TryAcquireJob(max_pending))
         {
             SendError(conn, request_id, kRpcOverloaded, "server overloaded");
             FinishServerRpc(request_id, service_name, method_name, kRpcOverloaded, start_us);
@@ -283,7 +282,6 @@ void KrpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn,
 
         google::protobuf::Service *service = it->second.service;
         const google::protobuf::MethodDescriptor *method = mit->second;
-        m_pending_jobs.fetch_add(1, std::memory_order_relaxed);
 
         m_thread_pool.run([this, conn, service, method, args = std::move(args), request_id,
                            service_name, method_name, start_us]() {
@@ -295,7 +293,7 @@ void KrpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn,
                 FinishServerRpc(request_id, service_name, method_name, kRpcBadRequest, start_us);
                 RpcObjectPool::Release(request);
                 RpcObjectPool::Release(response);
-                m_pending_jobs.fetch_sub(1, std::memory_order_relaxed);
+                m_work.ReleaseJob();
                 return;
             }
             auto *ctrl = new Krpccontroller();
@@ -306,7 +304,7 @@ void KrpcProvider::OnMessage(const muduo::net::TcpConnectionPtr &conn,
                 const int code = ctrl->Failed() ? ctrl->ErrorCode() : kRpcOk;
                 FinishServerRpc(request_id, service_name, method_name, code, start_us);
                 delete ctrl;
-                m_pending_jobs.fetch_sub(1, std::memory_order_relaxed);
+                m_work.ReleaseJob();
             });
             service->CallMethod(method, ctrl, request, response, done);
         });

@@ -8,6 +8,9 @@
 #include "RpcMetrics.h"
 #include "RetryPolicy.h"
 #include "ShutdownState.h"
+#include "ZkHandleGuard.h"
+#include "PendingWork.h"
+#include "RetryAttemptState.h"
 
 #include <muduo/net/Buffer.h>
 
@@ -17,6 +20,7 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <future>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -271,6 +275,146 @@ static void TestMpmc()
     Expect(invalid_capacity_rejected, "non-power-of-two capacity rejected");
 }
 
+static void TestZkHandleGuardSerializesReplacement()
+{
+    std::atomic<int> closes{0};
+    ZkHandleGuard guard([&closes](zhandle_t *) { closes.fetch_add(1, std::memory_order_relaxed); });
+    auto *first = reinterpret_cast<zhandle_t *>(0x1);
+    auto *second = reinterpret_cast<zhandle_t *>(0x2);
+    guard.Replace(first);
+
+    std::promise<void> entered;
+    std::promise<void> release;
+    auto release_future = release.get_future().share();
+    std::thread reader([&]() {
+        const auto called = guard.WithHandle([&](zhandle_t *zh) {
+            Expect(zh == first, "guard exposes current handle");
+            entered.set_value();
+            release_future.wait();
+            return true;
+        });
+        Expect(called.value_or(false), "guard executes operation with a live handle");
+    });
+    entered.get_future().wait();
+
+    std::atomic<bool> replaced{false};
+    std::thread replacer([&]() {
+        guard.Replace(second);
+        replaced.store(true, std::memory_order_release);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Expect(!replaced.load(std::memory_order_acquire), "replace waits for active handle operation");
+
+    release.set_value();
+    reader.join();
+    replacer.join();
+    Expect(replaced.load(std::memory_order_acquire), "replace completes after active operation");
+    Expect(closes.load(std::memory_order_relaxed) == 1, "replace closes previous handle once");
+    guard.Close();
+    Expect(closes.load(std::memory_order_relaxed) == 2, "close releases current handle once");
+    Expect(!guard.WithHandle([](zhandle_t *) { return true; }).has_value(), "closed guard rejects operations");
+}
+
+static void TestPendingWorkEnforcesLimitAndTracksSends()
+{
+    PendingWork work;
+    std::atomic<int> ready{0};
+    std::atomic<bool> start{false};
+    std::atomic<bool> release{false};
+    std::atomic<int> acquired{0};
+    std::atomic<int> peak{0};
+    std::vector<std::thread> workers;
+    for (int i = 0; i < 32; ++i)
+    {
+        workers.emplace_back([&]() {
+            ready.fetch_add(1, std::memory_order_relaxed);
+            while (!start.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+            if (!work.TryAcquireJob(4))
+            {
+                return;
+            }
+            acquired.fetch_add(1, std::memory_order_relaxed);
+            int observed = work.Jobs();
+            int old_peak = peak.load(std::memory_order_relaxed);
+            while (observed > old_peak &&
+                   !peak.compare_exchange_weak(old_peak, observed, std::memory_order_relaxed))
+            {
+            }
+            while (!release.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+            work.ReleaseJob();
+        });
+    }
+    while (ready.load(std::memory_order_acquire) != 32)
+    {
+        std::this_thread::yield();
+    }
+    start.store(true, std::memory_order_release);
+    while (acquired.load(std::memory_order_acquire) < 4)
+    {
+        std::this_thread::yield();
+    }
+    Expect(acquired.load(std::memory_order_relaxed) == 4, "only configured job slots are acquired");
+    Expect(peak.load(std::memory_order_relaxed) <= 4, "concurrent jobs never exceed limit");
+
+    work.BeginSend();
+    release.store(true, std::memory_order_release);
+    for (auto &worker : workers)
+    {
+        worker.join();
+    }
+    Expect(work.Jobs() == 0, "all job slots are released");
+    Expect(work.Total() == 1, "queued response remains pending after business work");
+    work.EndSend();
+    Expect(work.Total() == 0, "send completion drains final pending work");
+}
+
+static void TestRetryAttemptStateMatrix()
+{
+    RetryAttemptState borrow_fail;
+    Expect(borrow_fail.TryStartRetry(kRpcConnectFail, false),
+           "borrow failure before send may retry once");
+
+    RetryAttemptState closed_before_send;
+    Expect(closed_before_send.TryStartRetry(kRpcConnectFail, false),
+           "event-loop close before send may retry once");
+    Expect(!closed_before_send.TryStartRetry(kRpcConnectFail, false),
+           "only one pre-send retry is allowed");
+
+    RetryAttemptState after_submit;
+    Expect(!after_submit.TryStartRetry(kRpcConnectFail, true),
+           "disconnect after submit is not replayed");
+
+    RetryAttemptState timeout;
+    Expect(!timeout.TryStartRetry(kRpcTimeout, false), "timeout is not replayed");
+
+    RetryAttemptState overloaded;
+    Expect(!overloaded.TryStartRetry(kRpcOverloaded, false), "server overload is not replayed");
+
+    RetryAttemptState finish;
+    std::atomic<int> winners{0};
+    std::vector<std::thread> racers;
+    for (int i = 0; i < 8; ++i)
+    {
+        racers.emplace_back([&]() {
+            if (finish.TryFinish())
+            {
+                winners.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    for (auto &racer : racers)
+    {
+        racer.join();
+    }
+    Expect(winners.load(std::memory_order_relaxed) == 1, "final completion has one winner");
+}
+
 int main()
 {
     TestRpcFrameFits();
@@ -283,6 +427,9 @@ int main()
     TestRpcMetrics();
     TestHashWriteSerialized();
     TestMpmc();
+    TestZkHandleGuardSerializesReplacement();
+    TestPendingWorkEnforcesLimitAndTracksSends();
+    TestRetryAttemptStateMatrix();
     if (g_failed != 0)
     {
         std::cerr << g_failed << " assertion(s) failed" << std::endl;

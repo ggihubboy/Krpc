@@ -2,6 +2,7 @@
 #define _Krpcprovider_H__
 
 #include "google/protobuf/service.h"
+#include "PendingWork.h"
 #include "ShutdownState.h"
 #include "zookeeperutil.h"
 
@@ -35,8 +36,8 @@ private:
     ZkClient m_zk;
     std::shared_ptr<muduo::net::TcpServer> m_server;
     ShutdownState m_shutdown;
+    PendingWork m_work;
     bool m_drain_started = false;
-    std::atomic<int> m_pending_jobs{0};
 
     struct ServiceInfo
     {
