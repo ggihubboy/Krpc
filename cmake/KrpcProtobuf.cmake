@@ -1,22 +1,23 @@
-# Resolve protoc and generate C++ sources from .proto files.
+# Resolve protoc and generate C++ sources from .proto files with the
+# official CMake Protobuf helpers.
 #
-# Ubuntu 24.04's protobuf CMake CONFIG package may not set
-# Protobuf_PROTOC_EXECUTABLE. CI previously failed at build time when the
-# custom command ran an empty compiler path, or compiled .cc files before
-# the generated headers existed. This helper:
-#   1. Finds protoc from CMake variables, protobuf::protoc, or PATH
-#   2. Generates sources at configure time so the first compile already has headers
-#   3. Keeps an add_custom_command so editing a .proto still rebuilds
+# Ubuntu 24.04's protobuf CONFIG package leaves Protobuf_PROTOC_EXECUTABLE
+# empty unless protobuf_MODULE_COMPATIBLE is ON. An empty compiler path
+# makes the generate step fail at build time with make exit code 2.
 
 function(krpc_resolve_protoc)
     if(KRPC_PROTOC_EXECUTABLE AND EXISTS "${KRPC_PROTOC_EXECUTABLE}")
+        set(Protobuf_PROTOC_EXECUTABLE "${KRPC_PROTOC_EXECUTABLE}" CACHE FILEPATH
+            "protoc used to generate C++ sources" FORCE)
+        set(PROTOBUF_PROTOC_EXECUTABLE "${KRPC_PROTOC_EXECUTABLE}" CACHE FILEPATH
+            "protoc used to generate C++ sources" FORCE)
         return()
     endif()
 
     set(_protoc "")
-    if(Protobuf_PROTOC_EXECUTABLE)
+    if(Protobuf_PROTOC_EXECUTABLE AND EXISTS "${Protobuf_PROTOC_EXECUTABLE}")
         set(_protoc "${Protobuf_PROTOC_EXECUTABLE}")
-    elseif(PROTOBUF_PROTOC_EXECUTABLE)
+    elseif(PROTOBUF_PROTOC_EXECUTABLE AND EXISTS "${PROTOBUF_PROTOC_EXECUTABLE}")
         set(_protoc "${PROTOBUF_PROTOC_EXECUTABLE}")
     endif()
 
@@ -28,7 +29,7 @@ function(krpc_resolve_protoc)
                 IMPORTED_LOCATION_MINSIZEREL
                 IMPORTED_LOCATION_DEBUG)
             get_target_property(_loc protobuf::protoc ${_cfg})
-            if(_loc)
+            if(_loc AND EXISTS "${_loc}")
                 set(_protoc "${_loc}")
                 break()
             endif()
@@ -37,17 +38,15 @@ function(krpc_resolve_protoc)
 
     if(NOT _protoc)
         find_program(_krpc_protoc_path NAMES protoc)
-        set(_protoc "${_krpc_protoc_path}")
+        if(_krpc_protoc_path AND EXISTS "${_krpc_protoc_path}")
+            set(_protoc "${_krpc_protoc_path}")
+        endif()
     endif()
 
     if(NOT _protoc)
         message(FATAL_ERROR
             "protoc was not found. Install protobuf-compiler, or pass "
             "-DKRPC_PROTOC_EXECUTABLE=/path/to/protoc")
-    endif()
-
-    if(NOT EXISTS "${_protoc}")
-        message(FATAL_ERROR "protoc path does not exist: ${_protoc}")
     endif()
 
     execute_process(
@@ -63,63 +62,65 @@ function(krpc_resolve_protoc)
 
     set(KRPC_PROTOC_EXECUTABLE "${_protoc}" CACHE FILEPATH
         "protoc used to generate C++ sources" FORCE)
+    set(Protobuf_PROTOC_EXECUTABLE "${_protoc}" CACHE FILEPATH
+        "protoc used to generate C++ sources" FORCE)
+    set(PROTOBUF_PROTOC_EXECUTABLE "${_protoc}" CACHE FILEPATH
+        "protoc used to generate C++ sources" FORCE)
     message(STATUS "Using protoc: ${KRPC_PROTOC_EXECUTABLE} (${_version_text})")
 endfunction()
 
-# krpc_add_protobuf_library(<target> <proto_file>)
-# Creates a STATIC library from the generated .pb.cc / .pb.h.
-function(krpc_add_protobuf_library target proto_file)
-    if(NOT KRPC_PROTOC_EXECUTABLE)
-        message(FATAL_ERROR "krpc_resolve_protoc() must be called first")
-    endif()
-
+function(krpc_protobuf_generate_fallback cc_var h_var proto_file)
     get_filename_component(_abs "${proto_file}" ABSOLUTE)
     get_filename_component(_dir "${_abs}" DIRECTORY)
     get_filename_component(_name "${_abs}" NAME_WE)
-    set(_gen "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    file(MAKE_DIRECTORY "${_gen}")
-    set(_cc "${_gen}/${_name}.pb.cc")
-    set(_h "${_gen}/${_name}.pb.h")
+    set(_cc "${CMAKE_CURRENT_BINARY_DIR}/${_name}.pb.cc")
+    set(_h "${CMAKE_CURRENT_BINARY_DIR}/${_name}.pb.h")
 
-    execute_process(
-        COMMAND "${KRPC_PROTOC_EXECUTABLE}"
-                "--cpp_out=${_gen}"
-                "-I${_dir}"
-                "${_abs}"
-        RESULT_VARIABLE _krpc_protoc_rc
-        ERROR_VARIABLE _krpc_protoc_err
-        OUTPUT_VARIABLE _krpc_protoc_out)
-    if(NOT _krpc_protoc_rc EQUAL 0)
-        message(FATAL_ERROR
-            "protoc failed to generate ${_name}.pb.cc "
-            "(exit ${_krpc_protoc_rc}): ${_krpc_protoc_err}${_krpc_protoc_out}")
-    endif()
-    if(NOT EXISTS "${_cc}" OR NOT EXISTS "${_h}")
-        message(FATAL_ERROR
-            "protoc ran but did not write ${_cc} and ${_h}")
+    if(TARGET protobuf::protoc)
+        set(_cmd protobuf::protoc)
+    else()
+        set(_cmd "${KRPC_PROTOC_EXECUTABLE}")
     endif()
 
     add_custom_command(
         OUTPUT "${_cc}" "${_h}"
-        COMMAND "${KRPC_PROTOC_EXECUTABLE}"
-                "--cpp_out=${_gen}"
-                "-I${_dir}"
+        COMMAND ${_cmd}
+                "--cpp_out=${CMAKE_CURRENT_BINARY_DIR}"
+                "-I" "${_dir}"
                 "${_abs}"
         DEPENDS "${_abs}"
         COMMENT "Generating ${_name}.pb.cc from ${_name}.proto"
         VERBATIM)
+    set(${cc_var} "${_cc}" PARENT_SCOPE)
+    set(${h_var} "${_h}" PARENT_SCOPE)
+endfunction()
 
-    add_library(${target} STATIC "${_cc}")
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        set_source_files_properties("${_cc}" PROPERTIES COMPILE_OPTIONS "-w")
+# krpc_add_protobuf_library(<target> <proto_file>)
+# Creates a STATIC library from CMake's official protobuf C++ generator.
+function(krpc_add_protobuf_library target proto_file)
+    if(NOT KRPC_PROTOC_EXECUTABLE AND NOT Protobuf_PROTOC_EXECUTABLE)
+        message(FATAL_ERROR "krpc_resolve_protoc() must be called first")
     endif()
-    target_include_directories(${target} SYSTEM PUBLIC "${_gen}")
-    target_link_libraries(${target} PUBLIC
-        krpc_project_options
-        protobuf::libprotobuf)
+
+    get_filename_component(_abs "${proto_file}" ABSOLUTE)
+    set(PROTOBUF_GENERATE_CPP_APPEND_PATH ON)
+
+    if(COMMAND protobuf_generate_cpp)
+        protobuf_generate_cpp(_srcs _hdrs "${_abs}")
+    else()
+        krpc_protobuf_generate_fallback(_srcs _hdrs "${_abs}")
+    endif()
+
+    add_library(${target} STATIC ${_srcs})
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        set_source_files_properties(${_srcs} PROPERTIES COMPILE_OPTIONS "-w")
+        target_compile_options(${target} PRIVATE -w)
+    endif()
+    target_include_directories(${target} SYSTEM PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
+    target_link_libraries(${target} PUBLIC protobuf::libprotobuf)
     set_target_properties(${target} PROPERTIES
-        KRPC_PROTO_HEADER "${_h}"
-        KRPC_PROTO_SOURCE "${_cc}")
+        KRPC_PROTO_HEADER "${_hdrs}"
+        KRPC_PROTO_SOURCE "${_srcs}")
 endfunction()
 
 # Make source files wait for a generated protobuf header before compiling.

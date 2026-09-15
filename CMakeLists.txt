@@ -16,8 +16,19 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_L
     set(CMAKE_CXX20_EXTENSION_COMPILE_OPTION "-std=gnu++2a")
 endif()
 
+# Ubuntu 24.04 ships a protobuf CONFIG package that otherwise leaves
+# Protobuf_PROTOC_EXECUTABLE empty. Module-compatible mode fills the
+# variables expected by protobuf_generate_cpp().
+set(protobuf_MODULE_COMPATIBLE ON CACHE BOOL
+    "Populate FindProtobuf-compatible variables from the CONFIG package")
 find_package(Protobuf REQUIRED)
 find_package(Threads REQUIRED)
+
+if(NOT TARGET protobuf::libprotobuf)
+    message(FATAL_ERROR
+        "find_package(Protobuf) did not create protobuf::libprotobuf. "
+        "Install libprotobuf-dev.")
+endif()
 
 find_path(MUDUO_INCLUDE_DIR NAMES muduo/net/TcpServer.h)
 find_library(MUDUO_NET_LIBRARY NAMES muduo_net)

@@ -105,6 +105,42 @@ else
     fi
 fi
 
+for stale in \
+    "$ROOT/src/Krpcheader.pb.cc" \
+    "$ROOT/src/Krpcheader.pb.h" \
+    "$ROOT/src/include/Krpcheader.pb.h" \
+    "$ROOT/example/user.pb.cc" \
+    "$ROOT/example/user.pb.h"; do
+    if [[ -e "$stale" ]]; then
+        echo "FAIL: stale generated protobuf file must not live in the source tree: $stale" >&2
+        failed=$((failed + 1))
+    fi
+done
+
+if ! grep -E '^[[:space:]]*find_package\(Protobuf REQUIRED\)' "$ROOT/CMakeLists.txt" >/dev/null; then
+    echo "FAIL: root CMakeLists.txt must find Protobuf" >&2
+    failed=$((failed + 1))
+elif ! awk '
+    /protobuf_MODULE_COMPATIBLE/ { compatible = 1 }
+    /find_package\(Protobuf REQUIRED\)/ { found = 1; if (!compatible) missing = 1 }
+    END { exit(missing || !found) }
+' "$ROOT/CMakeLists.txt"; then
+    echo "FAIL: protobuf_MODULE_COMPATIBLE must be set before find_package(Protobuf) so Ubuntu 24.04 fills Protobuf_PROTOC_EXECUTABLE" >&2
+    failed=$((failed + 1))
+fi
+
+if ! grep -E 'protobuf_generate(_cpp)?' "$ROOT/cmake/KrpcProtobuf.cmake" >/dev/null; then
+    echo "FAIL: cmake/KrpcProtobuf.cmake must use official protobuf_generate/protobuf_generate_cpp" >&2
+    failed=$((failed + 1))
+fi
+
+if grep -n 'get_target_property' "$ROOT/cmake/KrpcProtobuf.cmake" >/dev/null; then
+    if ! grep -E 'EXISTS "\$\{_loc\}"' "$ROOT/cmake/KrpcProtobuf.cmake" >/dev/null; then
+        echo "FAIL: imported protoc location must be checked with EXISTS so CMake -NOTFOUND is not used as the compiler" >&2
+        failed=$((failed + 1))
+    fi
+fi
+
 meta="$(KRPC_BENCH_METADATA_ONLY=1 KRPC_BUILD_TYPE=Release "$ROOT/scripts/bench.sh")"
 for field in date hostname cpu ram kernel compiler build_type command; do
     if ! grep -E "^${field}=" >/dev/null <<<"${meta}"; then
