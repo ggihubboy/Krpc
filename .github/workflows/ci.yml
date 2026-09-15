@@ -11,7 +11,7 @@ permissions:
 jobs:
   build-and-test:
     name: ${{ matrix.name }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -28,27 +28,34 @@ jobs:
 
     env:
       MUDUO_PREFIX: ${{ github.workspace }}/.deps/muduo
+      DEBIAN_FRONTEND: noninteractive
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential cmake git \
-            libboost-dev libboost-test-dev \
-            libgoogle-glog-dev \
-            libprotobuf-dev protobuf-compiler \
-            libzookeeper-mt-dev
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            sudo apt-get update && \
+            sudo apt-get install --yes --no-install-recommends \
+              build-essential cmake git \
+              libboost-dev libboost-test-dev \
+              libgoogle-glog-dev \
+              libprotobuf-dev protobuf-compiler \
+              libzookeeper-mt-dev && exit 0
+            echo "apt install failed (attempt ${attempt}), retrying..."
+            sleep 15
+          done
+          exit 1
 
       - name: Cache Muduo
         id: cache-muduo
         uses: actions/cache@v4
         with:
           path: ${{ env.MUDUO_PREFIX }}
-          key: muduo-v2.0.2-ubuntu-22.04
+          key: muduo-v2.0.2-ubuntu-24.04
 
       - name: Build Muduo
         if: steps.cache-muduo.outputs.cache-hit != 'true'
@@ -71,31 +78,38 @@ jobs:
 
   integration:
     name: Integration (ZooKeeper smoke)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     env:
       MUDUO_PREFIX: ${{ github.workspace }}/.deps/muduo
+      DEBIAN_FRONTEND: noninteractive
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential cmake git \
-            libboost-dev libboost-test-dev \
-            libgoogle-glog-dev \
-            libprotobuf-dev protobuf-compiler \
-            libzookeeper-mt-dev
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            sudo apt-get update && \
+            sudo apt-get install --yes --no-install-recommends \
+              build-essential cmake git \
+              libboost-dev libboost-test-dev \
+              libgoogle-glog-dev \
+              libprotobuf-dev protobuf-compiler \
+              libzookeeper-mt-dev && exit 0
+            echo "apt install failed (attempt ${attempt}), retrying..."
+            sleep 15
+          done
+          exit 1
 
       - name: Cache Muduo
         id: cache-muduo
         uses: actions/cache@v4
         with:
           path: ${{ env.MUDUO_PREFIX }}
-          key: muduo-v2.0.2-ubuntu-22.04
+          key: muduo-v2.0.2-ubuntu-24.04
 
       - name: Build Muduo
         if: steps.cache-muduo.outputs.cache-hit != 'true'
