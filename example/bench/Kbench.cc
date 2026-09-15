@@ -4,7 +4,7 @@
 #include "Krpccontroller.h"
 #include "KrpcLogger.h"
 #include "RpcMetrics.h"
-#include "../user.pb.h"
+#include "user.pb.h"
 
 #include <algorithm>
 #include <atomic>

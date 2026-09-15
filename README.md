@@ -168,20 +168,8 @@ KRPC_BENCH_PAYLOAD=32768 KRPC_BENCH_REQUESTS=200 ./scripts/bench.sh
 
 结果记录模板见 [docs/benchmark-results.md](docs/benchmark-results.md)。
 
-改 `example/user.proto` 后：
-
-```bash
-cd example
-protoc --cpp_out=. user.proto
-```
-
-改 `src/Krpcheader.proto` 后：
-
-```bash
-cd src
-protoc --cpp_out=. Krpcheader.proto
-mv Krpcheader.pb.h include/
-```
+改 `example/user.proto` 或 `src/Krpcheader.proto` 后，重新 cmake 构建即可；
+CMake 会用本机 `protoc` 生成对应的 `.pb.cc` / `.pb.h`。
 
 ## 模块
 

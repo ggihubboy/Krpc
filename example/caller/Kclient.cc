@@ -3,7 +3,7 @@
 #include "KrpcConnectPool.h"
 #include "Krpccontroller.h"
 #include "KrpcLogger.h"
-#include "../user.pb.h"
+#include "user.pb.h"
 
 #include <cstdlib>
 #include <iostream>
