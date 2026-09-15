@@ -56,6 +56,9 @@ if(KRPC_ENABLE_ASAN)
         -fsanitize=address -fno-omit-frame-pointer)
 endif()
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/KrpcProtobuf.cmake")
+krpc_resolve_protoc()
+
 set(KRPC_DEPENDENCIES
     protobuf::libprotobuf
     Threads::Threads

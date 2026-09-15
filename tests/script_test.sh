@@ -84,6 +84,27 @@ if [[ "$(sed -n '1p' "${KRPC_COMPOSE_LOG}")" != "server1-stopped" ]]; then
     failed=$((failed + 1))
 fi
 
+if ! command -v protoc >/dev/null 2>&1; then
+    echo "FAIL: protoc must be on PATH so CI and local builds can generate protobuf C++" >&2
+    failed=$((failed + 1))
+else
+    mkdir -p "$tmp/proto"
+    if ! protoc --cpp_out="$tmp/proto" -I "$ROOT/src" "$ROOT/src/Krpcheader.proto"; then
+        echo "FAIL: protoc cannot generate Krpcheader.proto" >&2
+        failed=$((failed + 1))
+    elif [[ ! -f "$tmp/proto/Krpcheader.pb.cc" || ! -f "$tmp/proto/Krpcheader.pb.h" ]]; then
+        echo "FAIL: protoc did not write Krpcheader.pb.cc/.h" >&2
+        failed=$((failed + 1))
+    fi
+    if ! protoc --cpp_out="$tmp/proto" -I "$ROOT/example" "$ROOT/example/user.proto"; then
+        echo "FAIL: protoc cannot generate user.proto" >&2
+        failed=$((failed + 1))
+    elif [[ ! -f "$tmp/proto/user.pb.cc" || ! -f "$tmp/proto/user.pb.h" ]]; then
+        echo "FAIL: protoc did not write user.pb.cc/.h" >&2
+        failed=$((failed + 1))
+    fi
+fi
+
 meta="$(KRPC_BENCH_METADATA_ONLY=1 KRPC_BUILD_TYPE=Release "$ROOT/scripts/bench.sh")"
 for field in date hostname cpu ram kernel compiler build_type command; do
     if ! grep -E "^${field}=" >/dev/null <<<"${meta}"; then

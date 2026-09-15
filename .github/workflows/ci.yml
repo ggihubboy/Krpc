@@ -61,12 +61,19 @@ jobs:
         if: steps.cache-muduo.outputs.cache-hit != 'true'
         run: ./scripts/install_muduo.sh "${MUDUO_PREFIX}"
 
+      - name: Show protobuf toolchain
+        run: |
+          set -euo pipefail
+          command -v protoc
+          protoc --version
+
       - name: Configure
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DCMAKE_PREFIX_PATH="${MUDUO_PREFIX}" \
             -DKRPC_ENABLE_ASAN=${{ matrix.asan }}
+          ls -l build/src/generated build/example/generated
 
       - name: Build
         run: cmake --build build --parallel 2
@@ -115,11 +122,18 @@ jobs:
         if: steps.cache-muduo.outputs.cache-hit != 'true'
         run: ./scripts/install_muduo.sh "${MUDUO_PREFIX}"
 
+      - name: Show protobuf toolchain
+        run: |
+          set -euo pipefail
+          command -v protoc
+          protoc --version
+
       - name: Configure and build (Release)
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="${MUDUO_PREFIX}"
+          ls -l build/src/generated build/example/generated
           cmake --build build --parallel 2
 
       - name: Run integration smoke

@@ -168,8 +168,9 @@ KRPC_BENCH_PAYLOAD=32768 KRPC_BENCH_REQUESTS=200 ./scripts/bench.sh
 
 结果记录模板见 [docs/benchmark-results.md](docs/benchmark-results.md)。
 
-改 `example/user.proto` 或 `src/Krpcheader.proto` 后，重新 cmake 构建即可；
-CMake 会用本机 `protoc` 生成对应的 `.pb.cc` / `.pb.h`。
+改 `example/user.proto` 或 `src/Krpcheader.proto` 后，重新 cmake 构建即可。
+CMake 会在配置阶段用本机 `protoc` 生成 `.pb.cc` / `.pb.h`，不要把这些生成文件提交进仓库。
+本机 Protobuf 版本和 GitHub（Ubuntu 24.04，目前是 3.21）可以不一样；每次构建都会按当前环境重新生成。
 
 ## 模块
 
@@ -194,3 +195,4 @@ CMake 会用本机 `protoc` 生成对应的 `.pb.cc` / `.pb.h`。
 - 自动换节点仅覆盖发送前连接失败；超时、断连和服务端错误不会隐式重放
 - 大包连接仍和 Muduo `outputBuffer` 共用 fd，不另建自管 socket
 - GitHub Actions 会跑 Debug/Release/ASan 单元测试；ZooKeeper 集成演示需要本地 Docker
+- `.pb.cc` / `.pb.h` 由本机 `protoc` 生成，不能把某一版 Protobuf 的生成结果提交进仓库（3.12 的生成文件在 3.21 上编不过）
