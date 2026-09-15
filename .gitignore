@@ -26,6 +26,10 @@
 *.log.*
 /logs/
 
+# Protobuf outputs generated at configure/build time
+*.pb.cc
+*.pb.h
+
 # Editor and operating-system temporary files
 *~
 *.swp
