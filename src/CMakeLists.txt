@@ -16,6 +16,8 @@ target_include_directories(krpc_core
         "${ZOOKEEPER_INCLUDE_DIR}"
         "${GLOG_INCLUDE_DIR}")
 
+target_compile_definitions(krpc_core PUBLIC THREADED)
+
 target_link_libraries(krpc_core
     PUBLIC
         krpc_project_options

@@ -3,8 +3,6 @@
 
 #include "ZkHandleGuard.h"
 
-#include <zookeeper/zookeeper.h>
-
 #include <atomic>
 #include <condition_variable>
 #include <functional>

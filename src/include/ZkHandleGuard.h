@@ -1,7 +1,7 @@
 #ifndef KRPC_ZK_HANDLE_GUARD_H
 #define KRPC_ZK_HANDLE_GUARD_H
 
-#include <zookeeper/zookeeper.h>
+#include "ZkCApi.h"
 
 #include <functional>
 #include <mutex>

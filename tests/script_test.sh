@@ -141,6 +141,33 @@ if grep -n 'get_target_property' "$ROOT/cmake/KrpcProtobuf.cmake" >/dev/null; th
     fi
 fi
 
+# Ubuntu 24.04 ships ZooKeeper 3.9. Sync C APIs such as zoo_wget_children
+# and zoo_get are inside #ifdef THREADED. Include them only through ZkCApi.h.
+zk_api="$ROOT/src/include/ZkCApi.h"
+if [[ ! -f "$zk_api" ]]; then
+    echo "FAIL: missing $zk_api; it must #define THREADED before zookeeper.h" >&2
+    failed=$((failed + 1))
+elif ! awk '
+    /#define[[:space:]]+THREADED/ { defined = 1 }
+    /#include[[:space:]]*[<"]zookeeper\/zookeeper.h[>"]/ {
+        inc = 1
+        if (!defined) bad = 1
+    }
+    END { exit(!(inc && defined) || bad) }
+' "$zk_api"; then
+    echo "FAIL: ZkCApi.h must #define THREADED before including zookeeper.h" >&2
+    failed=$((failed + 1))
+fi
+
+while IFS= read -r f; do
+    echo "FAIL: $f includes zookeeper.h directly; include ZkCApi.h instead so ZooKeeper 3.9 exposes zoo_wget_children" >&2
+    failed=$((failed + 1))
+done < <(
+    grep -RIl --include='*.h' --include='*.cc' 'zookeeper/zookeeper.h' \
+        "$ROOT/src" "$ROOT/tests" 2>/dev/null \
+        | grep -v '/ZkCApi.h$' || true
+)
+
 meta="$(KRPC_BENCH_METADATA_ONLY=1 KRPC_BUILD_TYPE=Release "$ROOT/scripts/bench.sh")"
 for field in date hostname cpu ram kernel compiler build_type command; do
     if ! grep -E "^${field}=" >/dev/null <<<"${meta}"; then

@@ -197,3 +197,4 @@ CMake 用本机 `protoc` 在构建目录生成 `.pb.cc` / `.pb.h`，不要把这
 - GitHub Actions 会跑 Debug/Release/ASan 单元测试；ZooKeeper 集成演示需要本地 Docker
 - `.pb.cc` / `.pb.h` 由本机 `protoc` 在构建时生成，不能把某一版 Protobuf 的生成结果提交进仓库（3.12 的生成文件在 3.21 上编不过）
 - GitHub Ubuntu 24.04 必须打开 CMake 的 `protobuf_MODULE_COMPATIBLE`，否则 `protoc` 路径为空，生成步骤会在编译阶段失败
+- GitHub Ubuntu 24.04 的 ZooKeeper 是 3.9：同步 C API（`zoo_get`、`zoo_wget_children` 等）必须先定义 `THREADED` 才看得见。项目用 `src/include/ZkCApi.h` 统一包含，不要直接 `#include <zookeeper/zookeeper.h>`。本机 Ubuntu 20.04 的 ZooKeeper 3.4 没有这个限制，所以本机能编过、CI 会红。
